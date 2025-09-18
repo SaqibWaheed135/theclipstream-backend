@@ -1,5 +1,5 @@
-const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
 
 const AdminSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
@@ -19,4 +19,5 @@ AdminSchema.methods.matchPassword = async function (enteredPassword) {
   return bcrypt.compare(enteredPassword, this.password);
 };
 
-module.exports = mongoose.model("Admin", AdminSchema);
+const Admin = mongoose.model("Admin", AdminSchema);
+export default Admin;

@@ -1,10 +1,11 @@
-const express = require('express');
+import express from 'express';
 const router = express.Router();
-const jwt = require('jsonwebtoken');
-const { OAuth2Client } = require('google-auth-library');
-const User = require('../models/User');
+import jwt from 'jsonwebtoken';
+import {OAuth2Client} from 'google-auth-library';
+import User from '../models/User.js'
 
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || '');
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || "");
+
 
 // Default avatar generator function
 function generateDefaultAvatar(username) {
@@ -242,5 +243,4 @@ router.delete("/deleteUser/:id", async (req, res) => {
   }
 });
 
-
-module.exports = router;
+export default router;
