@@ -32,6 +32,7 @@ const allowedOrigins = [
   "http://localhost:3000", // Alternative React port
   "http://localhost:5000", // API itself (optional)
   "https://theclipstream.com", // your production domain
+  "https://theclipstream.netlify.app"
 ];
 
 // CORS configuration
