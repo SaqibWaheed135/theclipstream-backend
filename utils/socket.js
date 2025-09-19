@@ -12,7 +12,7 @@ let io;
 const initializeSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: "https://theclipstream.netlify.app" || "http://localhost:3000",
+      origin: "https://theclipstream.netlify.app" || "http://localhost:5173/",
       methods: ["GET", "POST"],
       credentials: true
     }
