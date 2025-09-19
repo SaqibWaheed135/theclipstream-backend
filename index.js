@@ -87,6 +87,16 @@ app.use('/api/messages', messageRoutes);
 app.get('/api/users/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
+    
+    // ✅ VALIDATE ObjectId before querying database
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ 
+        msg: 'Invalid user ID format',
+        received: userId,
+        expected: 'Valid MongoDB ObjectId (24 character hex string)'
+      });
+    }
+    
     const User = (await import('./models/User.js')).default;
     
     const user = await User.findById(userId)
