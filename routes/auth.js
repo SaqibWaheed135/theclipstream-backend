@@ -1,7 +1,7 @@
 import express from 'express';
 const router = express.Router();
 import jwt from 'jsonwebtoken';
-import {OAuth2Client} from 'google-auth-library';
+import { OAuth2Client } from 'google-auth-library';
 import User from '../models/User.js'
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || "");
@@ -12,13 +12,13 @@ function generateDefaultAvatar(username) {
   // You can use services like:
   // 1. UI Avatars (free)
   const uiAvatarsUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=random&color=fff&size=200&bold=true`;
-  
+
   // 2. Alternative: Gravatar default avatars
   // const gravatarUrl = `https://www.gravatar.com/avatar/${Math.random().toString(36).substring(7)}?d=identicon&s=200`;
-  
+
   // 3. Alternative: Dicebear (more modern)
   // const dicebearUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}`;
-  
+
   return uiAvatarsUrl;
 }
 
@@ -47,10 +47,10 @@ router.post('/signup', async (req, res) => {
     // Generate default avatar
     const defaultAvatar = generateDefaultAvatar(username);
 
-    const user = new User({ 
-      username, 
-      email, 
-      password, 
+    const user = new User({
+      username,
+      email,
+      password,
       points: 5,
       avatar: defaultAvatar
     });
@@ -59,12 +59,12 @@ router.post('/signup', async (req, res) => {
     const token = generateToken(user);
     res.status(201).json({
       token,
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        email: user.email, 
-        avatar: user.avatar, 
-        points: user.points 
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        avatar: user.avatar,
+        points: user.points
       }
     });
   } catch (err) {
@@ -88,12 +88,12 @@ router.post('/login', async (req, res) => {
     const token = generateToken(user);
     res.json({
       token,
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        email: user.email, 
-        avatar: user.avatar, 
-        points: user.points 
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        avatar: user.avatar,
+        points: user.points
       }
     });
   } catch (err) {
@@ -118,6 +118,8 @@ router.post('/google', async (req, res) => {
     });
 
     const payload = ticket.getPayload();
+    console.log("Google token aud:", payload.aud);
+    console.log("Backend expected aud:", process.env.GOOGLE_CLIENT_ID);
     const { sub: googleId, email, name, picture } = payload;
 
     if (!email) {
@@ -130,7 +132,7 @@ router.post('/google', async (req, res) => {
     if (!user) {
       // Generate unique username if name is not provided
       let username = name || email.split('@')[0];
-      
+
       // Ensure username is unique
       const existingUser = await User.findOne({ username });
       if (existingUser) {
@@ -152,22 +154,22 @@ router.post('/google', async (req, res) => {
     } else {
       // Update existing user with Google info if missing
       let updated = false;
-      
+
       if (!user.googleId) {
         user.googleId = googleId;
         updated = true;
       }
-      
+
       if (!user.avatar && picture) {
         user.avatar = picture;
         updated = true;
       }
-      
+
       if (!user.isVerified) {
         user.isVerified = true; // Mark as verified since they used Google
         updated = true;
       }
-      
+
       if (updated) {
         await user.save();
       }
@@ -176,11 +178,11 @@ router.post('/google', async (req, res) => {
     const token = generateToken(user);
     res.json({
       token,
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        email: user.email, 
-        avatar: user.avatar, 
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        avatar: user.avatar,
         points: user.points,
         isVerified: user.isVerified
       }
@@ -194,7 +196,7 @@ router.post('/google', async (req, res) => {
 // GET /api/auth/getUsers
 router.get("/getUsers", async (req, res) => {
   try {
-    const users = await User.find({}, "-password -__v"); 
+    const users = await User.find({}, "-password -__v");
     // exclude password & __v
 
     res.json({
