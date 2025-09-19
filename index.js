@@ -19,7 +19,7 @@ import liveRoutes from './routes/liveRoutes.js'; // New live streaming routes
 import adminRoutes from './routes/adminAuth.js'
 import followRoutes from './routes/followRoutes.js'
 import messageRoutes from './routes/messageRoutes.js';
-
+import userRoutes from './routes/userRoutes.js'
 // Import Socket.IO setup
 import { initializeSocket } from './utils/socket.js';
 
@@ -83,20 +83,11 @@ app.use('/api/live', liveRoutes);
 app.use("/api/admin", adminRoutes);
 app.use('/api/follow', followRoutes); 
 app.use('/api/messages', messageRoutes);
+app.use('/api/users', userRoutes);
 
 app.get('/api/users/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    
-    // ✅ VALIDATE ObjectId before querying database
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({ 
-        msg: 'Invalid user ID format',
-        received: userId,
-        expected: 'Valid MongoDB ObjectId (24 character hex string)'
-      });
-    }
-    
     const User = (await import('./models/User.js')).default;
     
     const user = await User.findById(userId)
