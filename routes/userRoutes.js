@@ -3,20 +3,23 @@ import express from 'express';
 import authMiddleware, { optionalAuth } from '../middleware/auth.js';
 import User from '../models/User.js';
 import multer from 'multer';
+import AWS from 'aws-sdk';
+import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
 const router = express.Router();
 
-// Configure multer for file uploads (avatar)
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/avatars/');
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'avatar-' + uniqueSuffix + path.extname(file.originalname));
-  }
+// Configure AWS S3 for Wasabi
+const s3 = new AWS.S3({
+  accessKeyId: process.env.WASABI_KEY,
+  secretAccessKey: process.env.WASABI_SECRET,
+  endpoint: process.env.WASABI_ENDPOINT,
+  region: process.env.WASABI_REGION,
+  signatureVersion: "v4",
 });
+
+// Configure multer for memory storage (we'll upload to Wasabi directly)
+const storage = multer.memoryStorage();
 
 const upload = multer({ 
   storage: storage,
@@ -32,6 +35,51 @@ const upload = multer({
     }
   }
 });
+
+// Helper function to upload file to Wasabi
+const uploadToWasabi = async (file, folder = 'avatars') => {
+  try {
+    const fileExtension = path.extname(file.originalname);
+    const fileName = `${folder}/${uuidv4()}${fileExtension}`;
+    
+    const uploadParams = {
+      Bucket: process.env.WASABI_BUCKET,
+      Key: fileName,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+      ACL: 'public-read', // Make the file publicly accessible
+      CacheControl: 'max-age=31536000', // Cache for 1 year
+    };
+
+    const result = await s3.upload(uploadParams).promise();
+    return result.Location;
+  } catch (error) {
+    console.error('Error uploading to Wasabi:', error);
+    throw new Error('Failed to upload file to storage');
+  }
+};
+
+// Helper function to delete file from Wasabi
+const deleteFromWasabi = async (fileUrl) => {
+  try {
+    // Extract the key from the full URL
+    const urlParts = fileUrl.split('/');
+    const bucketIndex = urlParts.findIndex(part => part === process.env.WASABI_BUCKET);
+    if (bucketIndex === -1) return;
+    
+    const key = urlParts.slice(bucketIndex + 1).join('/');
+    
+    const deleteParams = {
+      Bucket: process.env.WASABI_BUCKET,
+      Key: key
+    };
+
+    await s3.deleteObject(deleteParams).promise();
+  } catch (error) {
+    console.error('Error deleting from Wasabi:', error);
+    // Don't throw error here as we don't want to fail the entire operation
+  }
+};
 
 // Search users
 router.get('/search', authMiddleware, async (req, res) => {
@@ -147,7 +195,7 @@ router.get('/suggestions/users', authMiddleware, async (req, res) => {
   }
 });
 
-// Update user profile (Enhanced)
+// Update user profile (Enhanced with Wasabi)
 router.put('/profile', authMiddleware, upload.single('avatar'), async (req, res) => {
   try {
     const userId = req.userId;
@@ -163,6 +211,12 @@ router.put('/profile', authMiddleware, upload.single('avatar'), async (req, res)
       website,
       removeAvatar
     } = req.body;
+
+    // Get current user to check for existing avatar
+    const currentUser = await User.findById(userId).select('avatar');
+    if (!currentUser) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
 
     // Validate username uniqueness if provided
     if (username) {
@@ -236,8 +290,24 @@ router.put('/profile', authMiddleware, upload.single('avatar'), async (req, res)
 
     // Handle avatar upload or removal
     if (req.file) {
-      updateData.avatar = `/uploads/avatars/${req.file.filename}`;
+      try {
+        // Delete old avatar if exists
+        if (currentUser.avatar) {
+          await deleteFromWasabi(currentUser.avatar);
+        }
+
+        // Upload new avatar to Wasabi
+        const avatarUrl = await uploadToWasabi(req.file, 'avatars');
+        updateData.avatar = avatarUrl;
+      } catch (error) {
+        console.error('Avatar upload error:', error);
+        return res.status(500).json({ msg: 'Failed to upload avatar' });
+      }
     } else if (removeAvatar === 'true') {
+      // Delete current avatar from Wasabi
+      if (currentUser.avatar) {
+        await deleteFromWasabi(currentUser.avatar);
+      }
       updateData.avatar = null;
     }
 
