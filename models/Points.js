@@ -220,11 +220,24 @@ const pointsTransactionSchema = new mongoose.Schema({
     required: true
   },
   category: {
-    type: String,
-    enum: ['recharge', 'gift', 'boost', 'reward', 'refund', 'bonus', 'admin_adjustment'],
-    required: true,
-    index: true
-  },
+  type: String,
+  enum: [
+    'recharge',
+    'gift',
+    'boost',
+    'reward',
+    'refund',
+    'bonus',
+    'admin_adjustment',
+    // add withdrawal categories
+    'withdrawal_request',
+    'withdrawal_approved',
+    'withdrawal_rejected'
+  ],
+  required: true,
+  index: true
+},
+
   amount: {
     type: Number,
     required: true
