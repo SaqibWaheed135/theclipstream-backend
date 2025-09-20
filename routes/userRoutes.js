@@ -339,8 +339,16 @@ router.get('/points/balance', authMiddleware, async (req, res) => {
 router.post('/points/recharge', authMiddleware, async (req, res) => {
   try {
     const userId = req.userId;
-    const { amount, paymentMethod, transactionId } = req.body;
+    const { amount, paymentMethod, paymentDetails, transactionId } = req.body;
 
+     // Validate payment details based on payment method
+    if (paymentMethod === 'card') {
+      // Validate card details
+      if (!paymentDetails.cardNumber || !paymentDetails.expiryDate || !paymentDetails.cvv) {
+        return res.status(400).json({ msg: 'Complete card details required' });
+      }
+    }
+    
     // Validate amount
     if (!amount || amount <= 0) {
       return res.status(400).json({ msg: 'Invalid recharge amount' });
