@@ -338,4 +338,102 @@ router.get('/following/:userId', authMiddleware, async (req, res) => {
   }
 });
 
+// Get current user's followers
+router.get('/followers', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { page = 1, limit = 20 } = req.query;
+
+    const user = await User.findById(userId)
+      .populate({
+        path: 'followers',
+        select: 'username avatar bio followersCount isVerified',
+        options: {
+          limit: limit * 1,
+          skip: (page - 1) * limit
+        }
+      });
+
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    res.json({
+      data: user.followers,
+      totalCount: user.followers.length
+    });
+  } catch (error) {
+    console.error('Get followers error:', error);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get current user's following
+router.get('/following', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { page = 1, limit = 20 } = req.query;
+
+    const user = await User.findById(userId)
+      .populate({
+        path: 'following',
+        select: 'username avatar bio followersCount isVerified',
+        options: {
+          limit: limit * 1,
+          skip: (page - 1) * limit
+        }
+      });
+
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    res.json({
+      data: user.following,
+      totalCount: user.following.length
+    });
+  } catch (error) {
+    console.error('Get following error:', error);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get current user's friends (mutual followers)
+router.get('/friends', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { page = 1, limit = 20 } = req.query;
+
+    const user = await User.findById(userId)
+      .populate('followers', '_id username avatar bio followersCount isVerified')
+      .populate('following', '_id username avatar bio followersCount isVerified');
+
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    // Find mutual friends (users who follow each other)
+    const friends = user.following.filter(followedUser =>
+      user.followers.some(follower => 
+        follower._id.toString() === followedUser._id.toString()
+      )
+    );
+
+    // Apply pagination
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedFriends = friends.slice(startIndex, endIndex);
+
+    res.json({
+      data: paginatedFriends,
+      totalCount: friends.length,
+      page: parseInt(page),
+      totalPages: Math.ceil(friends.length / limit)
+    });
+  } catch (error) {
+    console.error('Get friends error:', error);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 export default router;
