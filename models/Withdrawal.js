@@ -1,0 +1,327 @@
+// models/Withdrawal.js
+const mongoose = require('mongoose');
+
+const withdrawalSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  requestId: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  amount: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  pointsToDeduct: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  method: {
+    type: String,
+    required: true,
+    enum: ['paypal', 'bank', 'card']
+  },
+  status: {
+    type: String,
+    required: true,
+    enum: ['pending', 'approved', 'rejected', 'cancelled', 'completed'],
+    default: 'pending'
+  },
+  details: {
+    fullName: {
+      type: String,
+      required: true
+    },
+    email: {
+      type: String,
+      required: true
+    },
+    phone: {
+      type: String,
+      required: true
+    },
+    paypalEmail: {
+      type: String,
+      required: function() { return this.method === 'paypal'; }
+    },
+    bankDetails: {
+      bankName: String,
+      accountNumber: String,
+      routingNumber: String,
+      accountHolderName: String,
+      swiftCode: String
+    },
+    cardDetails: {
+      cardNumber: String,
+      cardholderName: String,
+      expiryDate: String
+    },
+    address: {
+      street: String,
+      city: String,
+      state: String,
+      zipCode: String,
+      country: String
+    }
+  },
+  // Request timestamps
+  requestedAt: {
+    type: Date,
+    default: Date.now
+  },
+  // Approval/Rejection timestamps and info
+  approvedAt: {
+    type: Date
+  },
+  approvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  rejectedAt: {
+    type: Date
+  },
+  rejectedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  rejectionReason: {
+    type: String
+  },
+  // Cancellation info
+  cancelledAt: {
+    type: Date
+  },
+  cancelledBy: {
+    type: String,
+    enum: ['user', 'admin']
+  },
+  // Completion info
+  completedAt: {
+    type: Date
+  },
+  // Admin notes
+  adminNotes: {
+    type: String
+  },
+  // Metadata
+  metadata: {
+    userBalance: Number, // User's balance at time of request
+    exchangeRate: Number, // Points per dollar at time of request
+    fees: {
+      percentage: Number,
+      fixed: Number,
+      total: Number
+    },
+    paymentProvider: String,
+    paymentTransactionId: String,
+    ipAddress: String,
+    userAgent: String
+  }
+}, {
+  timestamps: true
+});
+
+// Indexes for performance
+withdrawalSchema.index({ userId: 1, status: 1 });
+withdrawalSchema.index({ requestId: 1 });
+withdrawalSchema.index({ status: 1, requestedAt: -1 });
+withdrawalSchema.index({ method: 1, status: 1 });
+
+// Virtual for formatted amount
+withdrawalSchema.virtual('formattedAmount').get(function() {
+  return `$${this.amount.toFixed(2)}`;
+});
+
+// Method to calculate processing time
+withdrawalSchema.methods.getProcessingTime = function() {
+  if (this.status === 'pending') {
+    const now = new Date();
+    const requestTime = this.requestedAt;
+    const diffHours = Math.floor((now - requestTime) / (1000 * 60 * 60));
+    return `${diffHours} hours ago`;
+  }
+  
+  if (this.approvedAt) {
+    const diffHours = Math.floor((this.approvedAt - this.requestedAt) / (1000 * 60 * 60));
+    return `Processed in ${diffHours} hours`;
+  }
+  
+  return 'N/A';
+};
+
+// Static method to get withdrawal statistics
+withdrawalSchema.statics.getStatistics = async function(dateRange = 30) {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - dateRange);
+  
+  return await this.aggregate([
+    {
+      $match: {
+        requestedAt: { $gte: startDate }
+      }
+    },
+    {
+      $group: {
+        _id: '$status',
+        count: { $sum: 1 },
+        totalAmount: { $sum: '$amount' },
+        totalPoints: { $sum: '$pointsToDeduct' }
+      }
+    }
+  ]);
+};
+
+module.exports = mongoose.model('Withdrawal', withdrawalSchema);
+
+// models/Points.js (Updated to include withdrawal-related transactions)
+const mongoose = require('mongoose');
+
+const pointsSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
+  type: {
+    type: String,
+    required: true,
+    enum: ['credit', 'debit']
+  },
+  amount: {
+    type: Number,
+    required: true
+  },
+  category: {
+    type: String,
+    required: true,
+    enum: [
+      'recharge',
+      'gift',
+      'boost',
+      'reward',
+      'refund',
+      'bonus',
+      'withdrawal_request',
+      'withdrawal_approved',
+      'withdrawal_rejected',
+      'withdrawal_cancelled',
+      'admin_adjustment'
+    ]
+  },
+  description: {
+    type: String,
+    required: true
+  },
+  balanceAfter: {
+    type: Number,
+    required: true
+  },
+  transactionId: {
+    type: String,
+    required: true,
+    index: true
+  },
+  metadata: {
+    relatedTransaction: mongoose.Schema.Types.ObjectId,
+    withdrawalId: mongoose.Schema.Types.ObjectId,
+    withdrawalRequest: mongoose.Schema.Types.ObjectId,
+    approvedBy: mongoose.Schema.Types.ObjectId,
+    rejectedBy: mongoose.Schema.Types.ObjectId,
+    status: String,
+    rejectionReason: String,
+    adminNotes: String,
+    originalRequestId: String,
+    approvedAt: Date,
+    rejectedAt: Date
+  }
+}, {
+  timestamps: true
+});
+
+// Compound indexes for queries
+pointsSchema.index({ userId: 1, createdAt: -1 });
+pointsSchema.index({ category: 1, createdAt: -1 });
+pointsSchema.index({ transactionId: 1 });
+
+// Virtual for current balance (should match the separate balance collection)
+pointsSchema.statics.getCurrentBalance = async function(userId) {
+  const result = await this.findOne({ userId }).sort({ createdAt: -1 });
+  return result ? result.balanceAfter : 0;
+};
+
+module.exports = mongoose.model('Points', pointsSchema);
+
+// models/UserBalance.js (Separate model to track current balance efficiently)
+const mongoose = require('mongoose');
+
+const userBalanceSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true
+  },
+  balance: {
+    type: Number,
+    required: true,
+    default: 0,
+    min: 0
+  },
+  lockedBalance: {
+    type: Number,
+    default: 0,
+    min: 0
+  }, // For pending withdrawals
+  totalEarned: {
+    type: Number,
+    default: 0
+  },
+  totalSpent: {
+    type: Number,
+    default: 0
+  },
+  totalWithdrawn: {
+    type: Number,
+    default: 0
+  },
+  lastTransaction: {
+    type: Date,
+    default: Date.now
+  }
+}, {
+  timestamps: true
+});
+
+// Method to update balance
+userBalanceSchema.methods.updateBalance = async function(amount, type, session = null) {
+  const options = session ? { session } : {};
+  
+  if (type === 'credit') {
+    this.balance += amount;
+    this.totalEarned += amount;
+  } else if (type === 'debit') {
+    if (this.balance < Math.abs(amount)) {
+      throw new Error('Insufficient balance');
+    }
+    this.balance -= Math.abs(amount);
+    this.totalSpent += Math.abs(amount);
+  } else if (type === 'withdraw') {
+    if (this.balance < Math.abs(amount)) {
+      throw new Error('Insufficient balance');
+    }
+    this.balance -= Math.abs(amount);
+    this.totalWithdrawn += Math.abs(amount);
+  }
+  
+  this.lastTransaction = new Date();
+  return await this.save(options);
+};
+
+module.exports = mongoose.model('UserBalance', userBalanceSchema);
