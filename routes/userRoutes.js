@@ -4,10 +4,31 @@ import authMiddleware, { optionalAuth } from '../middleware/auth.js';
 import User from '../models/User.js';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 
 const router = express.Router();
-const BASE_URL = 'https://theclipstream-backend.onrender.com'; // Adjust for your production URL
-// Configure multer for file uploads (avatar)
+const BASE_URL = process.env.BASE_URL || 'https://theclipstream-backend.onrender.com';
+
+// Create uploads directory if it doesn't exist
+const uploadsDir = path.join(process.cwd(), 'uploads/avatars');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Helper to safely build avatar URL
+const buildAvatarUrl = (avatarPath) => {
+  if (!avatarPath) return null;
+  
+  // If it's already a full URL, return as-is
+  if (avatarPath.startsWith('http://') || avatarPath.startsWith('https://')) {
+    return avatarPath;
+  }
+  
+  // Otherwise, assume it's a relative path and prepend BASE_URL
+  return `${BASE_URL}${avatarPath}`;
+};
+
+// Configure multer for file uploads (avatar) - LOCAL STORAGE
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, 'uploads/avatars/');
@@ -70,6 +91,9 @@ router.get('/search', authMiddleware, async (req, res) => {
         userObj.followersCount = userObj.followersCount || 0;
         userObj.followingCount = userObj.followingCount || 0;
         userObj.totalLikes = userObj.totalLikes || 0;
+        
+        // Transform avatar URL
+        userObj.avatar = buildAvatarUrl(userObj.avatar);
         return userObj;
       })
     );
@@ -99,6 +123,9 @@ router.get('/:userId', authMiddleware, async (req, res) => {
     user.followersCount = user.followersCount || (user.followers ? user.followers.length : 0);
     user.followingCount = user.followingCount || (user.following ? user.following.length : 0);
     user.savedVideosCount = user.savedVideos ? user.savedVideos.length : 0;
+
+    // Transform avatar URL
+    user.avatar = buildAvatarUrl(user.avatar);
 
     if (userId !== currentUserId) {
       delete user.email;
@@ -140,142 +167,134 @@ router.get('/suggestions/users', authMiddleware, async (req, res) => {
       })
       .limit(parseInt(limit));
 
-    res.json(suggestedUsers);
+    // Transform avatar URLs for all suggested users
+    const usersWithAvatars = suggestedUsers.map(user => {
+      const userObj = user.toObject();
+      userObj.avatar = buildAvatarUrl(userObj.avatar);
+      return userObj;
+    });
+
+    res.json(usersWithAvatars);
   } catch (error) {
     console.error('Get suggested users error:', error);
     res.status(500).json({ msg: 'Server error' });
   }
 });
 
-// Update user profile (Enhanced)
-// router.put('/profile', authMiddleware, upload.single('avatar'), async (req, res) => {
-//   try {
-//     const userId = req.userId;
-//     const {
-//       username,
-//       bio,
-//       isPrivate,
-//       email,
-//       firstName,
-//       lastName,
-//       dateOfBirth,
-//       location,
-//       website,
-//       removeAvatar
-//     } = req.body;
-
-//     // Validate username uniqueness if provided
-//     if (username) {
-//       const existingUser = await User.findOne({
-//         username,
-//         _id: { $ne: userId }
-//       });
-
-//       if (existingUser) {
-//         return res.status(400).json({ msg: 'Username already taken' });
-//       }
-
-//       if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
-//         return res.status(400).json({ 
-//           msg: 'Username must be 3-30 characters and contain only letters, numbers, and underscores' 
-//         });
-//       }
-//     }
-
-//     // Validate email if provided
-//     if (email) {
-//       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-//       if (!emailRegex.test(email)) {
-//         return res.status(400).json({ msg: 'Invalid email format' });
-//       }
-
-//       const existingEmailUser = await User.findOne({
-//         email,
-//         _id: { $ne: userId }
-//       });
-
-//       if (existingEmailUser) {
-//         return res.status(400).json({ msg: 'Email already in use' });
-//       }
-//     }
-
-//     // Validate bio length
-//     if (bio && bio.length > 160) {
-//       return res.status(400).json({ msg: 'Bio must be 160 characters or less' });
-//     }
-
-//     // Validate website URL if provided
-//     if (website && website.trim() !== '') {
-//       const urlRegex = /^https?:\/\/.+/;
-//       if (!urlRegex.test(website)) {
-//         return res.status(400).json({ msg: 'Website must be a valid URL starting with http:// or https://' });
-//       }
-//     }
-
-//     // Validate date of birth
-//     if (dateOfBirth) {
-//       const dob = new Date(dateOfBirth);
-//       const today = new Date();
-//       const age = today.getFullYear() - dob.getFullYear();
-      
-//       if (age < 13) {
-//         return res.status(400).json({ msg: 'You must be at least 13 years old' });
-//       }
-//     }
-
-//     const updateData = {};
-//     if (username !== undefined) updateData.username = username;
-//     if (bio !== undefined) updateData.bio = bio;
-//     if (isPrivate !== undefined) updateData.isPrivate = Boolean(isPrivate);
-//     if (email !== undefined) updateData.email = email;
-//     if (firstName !== undefined) updateData.firstName = firstName;
-//     if (lastName !== undefined) updateData.lastName = lastName;
-//     if (dateOfBirth !== undefined) updateData.dateOfBirth = dateOfBirth;
-//     if (location !== undefined) updateData.location = location;
-//     if (website !== undefined) updateData.website = website;
-
-//     // Handle avatar upload or removal
-//     if (req.file) {
-//       updateData.avatar = `/uploads/avatars/${req.file.filename}`;
-//     } else if (removeAvatar === 'true') {
-//       updateData.avatar = null;
-//     }
-
-//     const updatedUser = await User.findByIdAndUpdate(
-//       userId,
-//       updateData,
-//       { new: true, runValidators: true }
-//     ).select('-password');
-
-//     res.json({
-//       msg: 'Profile updated successfully',
-//       user: updatedUser
-//     });
-//   } catch (error) {
-//     console.error('Update profile error:', error);
-    
-//     if (error.code === 11000) {
-//       return res.status(400).json({ msg: 'Username or email already taken' });
-//     }
-    
-//     res.status(500).json({ msg: 'Server error while updating profile' });
-//   }
-// });
-
-
-// In the PUT /profile route, update the avatar handling:
+// Update user profile (COMPLETE AND FIXED)
 router.put('/profile', authMiddleware, upload.single('avatar'), async (req, res) => {
   try {
-    // ... existing validation code ...
+    const userId = req.userId;
+    const {
+      username,
+      bio,
+      isPrivate,
+      email,
+      firstName,
+      lastName,
+      dateOfBirth,
+      location,
+      website,
+      removeAvatar
+    } = req.body;
 
+    // Validate username uniqueness if provided
+    if (username) {
+      const existingUser = await User.findOne({
+        username,
+        _id: { $ne: userId }
+      });
+
+      if (existingUser) {
+        return res.status(400).json({ msg: 'Username already taken' });
+      }
+
+      if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+        return res.status(400).json({ 
+          msg: 'Username must be 3-30 characters and contain only letters, numbers, and underscores' 
+        });
+      }
+    }
+
+    // Validate email if provided
+    if (email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ msg: 'Invalid email format' });
+      }
+
+      const existingEmailUser = await User.findOne({
+        email,
+        _id: { $ne: userId }
+      });
+
+      if (existingEmailUser) {
+        return res.status(400).json({ msg: 'Email already in use' });
+      }
+    }
+
+    // Validate bio length
+    if (bio && bio.length > 160) {
+      return res.status(400).json({ msg: 'Bio must be 160 characters or less' });
+    }
+
+    // Validate website URL if provided
+    if (website && website.trim() !== '') {
+      const urlRegex = /^https?:\/\/.+/;
+      if (!urlRegex.test(website)) {
+        return res.status(400).json({ msg: 'Website must be a valid URL starting with http:// or https://' });
+      }
+    }
+
+    // Validate date of birth
+    if (dateOfBirth) {
+      const dob = new Date(dateOfBirth);
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const monthDiff = today.getMonth() - dob.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+        age--;
+      }
+      
+      if (age < 13) {
+        return res.status(400).json({ msg: 'You must be at least 13 years old' });
+      }
+    }
+
+    // Build update data object
     const updateData = {};
-    // ... existing fields ...
+    if (username !== undefined) updateData.username = username;
+    if (bio !== undefined) updateData.bio = bio;
+    if (isPrivate !== undefined) updateData.isPrivate = Boolean(isPrivate);
+    if (email !== undefined) updateData.email = email;
+    if (firstName !== undefined) updateData.firstName = firstName;
+    if (lastName !== undefined) updateData.lastName = lastName;
+    if (dateOfBirth !== undefined) updateData.dateOfBirth = dateOfBirth;
+    if (location !== undefined) updateData.location = location;
+    if (website !== undefined) updateData.website = website;
 
-    // Handle avatar upload or removal - FIXED
+    // Handle avatar upload or removal
     if (req.file) {
-      // Store the relative path in DB, but return full URL in response
+      // Delete old avatar if exists
+      const currentUser = await User.findById(userId);
+      if (currentUser && currentUser.avatar) {
+        const oldAvatarPath = path.join(process.cwd(), currentUser.avatar.replace(`${BASE_URL}`, ''));
+        if (fs.existsSync(oldAvatarPath)) {
+          fs.unlinkSync(oldAvatarPath);
+        }
+      }
+      
+      // Store the relative path in DB
       updateData.avatar = `/uploads/avatars/${req.file.filename}`;
     } else if (removeAvatar === 'true') {
+      // Delete current avatar file if exists
+      const currentUser = await User.findById(userId);
+      if (currentUser && currentUser.avatar) {
+        const oldAvatarPath = path.join(process.cwd(), currentUser.avatar.replace(`${BASE_URL}`, ''));
+        if (fs.existsSync(oldAvatarPath)) {
+          fs.unlinkSync(oldAvatarPath);
+        }
+      }
       updateData.avatar = null;
     }
 
@@ -285,20 +304,30 @@ router.put('/profile', authMiddleware, upload.single('avatar'), async (req, res)
       { new: true, runValidators: true }
     ).select('-password');
 
-    // IMPORTANT: Transform the avatar URL for the response
+    // Transform avatar URL for response
     const responseUser = { ...updatedUser.toObject() };
-    if (responseUser.avatar) {
-      responseUser.avatar = `${BASE_URL}${responseUser.avatar}`;
-    }
+    responseUser.avatar = buildAvatarUrl(responseUser.avatar);
 
     res.json({
       msg: 'Profile updated successfully',
-      user: responseUser  // Send the transformed user object
+      user: responseUser
     });
   } catch (error) {
-    // ... existing error handling ...
+    console.error('Update profile error:', error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({ msg: 'Username or email already taken' });
+    }
+    
+    // Handle multer errors
+    if (error.message && error.message.includes('Only JPEG, PNG, GIF, and WebP are allowed')) {
+      return res.status(400).json({ msg: error.message });
+    }
+    
+    res.status(500).json({ msg: 'Server error while updating profile' });
   }
 });
+
 // Get user's public stats
 router.get('/:userId/stats', optionalAuth, async (req, res) => {
   try {
@@ -344,9 +373,7 @@ router.get('/profile/edit', authMiddleware, async (req, res) => {
 
     // Transform avatar URL for response
     const responseUser = { ...user };
-    if (responseUser.avatar) {
-      responseUser.avatar = `${BASE_URL}${responseUser.avatar}`;
-    }
+    responseUser.avatar = buildAvatarUrl(responseUser.avatar);
 
     res.json(responseUser);
   } catch (error) {
