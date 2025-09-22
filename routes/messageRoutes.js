@@ -162,8 +162,21 @@ router.post('/media/signed-url', authMiddleware, async (req, res) => {
       ContentType: fileType,
     });
 
-    // Permanent file URL (publicly accessible if bucket allows)
-    const fileUrl = `https://${process.env.WASABI_BUCKET}.${process.env.WASABI_ENDPOINT.replace("https://", "")}/${key}`;
+    // Fix the file URL construction
+    // Option 1: If your WASABI_ENDPOINT includes the protocol
+    let fileUrl;
+    if (process.env.WASABI_ENDPOINT.startsWith('https://')) {
+      const endpointWithoutProtocol = process.env.WASABI_ENDPOINT.replace('https://', '');
+      fileUrl = `https://${process.env.WASABI_BUCKET}.${endpointWithoutProtocol}/${key}`;
+    } else {
+      // Option 2: If your WASABI_ENDPOINT doesn't include the protocol
+      fileUrl = `https://${process.env.WASABI_BUCKET}.${process.env.WASABI_ENDPOINT}/${key}`;
+    }
+
+    // Alternative approach - construct URL more reliably
+    // fileUrl = `${process.env.WASABI_ENDPOINT}/${process.env.WASABI_BUCKET}/${key}`;
+
+    console.log('Generated file URL:', fileUrl); // Debug log
 
     res.json({ uploadUrl, fileUrl, key });
   } catch (err) {
@@ -408,5 +421,29 @@ router.get('/conversations/search', authMiddleware, async (req, res) => {
         res.status(500).json({ msg: 'Server error' });
     }
 });
+
+// ✅ Stream media file from Wasabi using key
+router.get('/file/:key', authMiddleware, async (req, res) => {
+  try {
+    const { key } = req.params;
+
+    const params = {
+      Bucket: process.env.WASABI_BUCKET,
+      Key: key,
+    };
+
+    // Get signed URL (short-lived)
+    const url = s3.getSignedUrl('getObject', {
+      ...params,
+      Expires: 60 * 5, // 5 minutes
+    });
+
+    res.json({ url });
+  } catch (err) {
+    console.error('File fetch error:', err);
+    res.status(500).json({ msg: 'Could not fetch file' });
+  }
+});
+
 
 export default router;
