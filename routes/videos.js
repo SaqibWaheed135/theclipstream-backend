@@ -475,5 +475,40 @@ router.get("/liked", authMiddleware, async (req, res) => {
   }
 });
 
+// 12. Admin Upload Video (auto-approved)
+router.post("/admin/add", async (req, res) => {
+  try {
+    const { uri, description, title, avatar, adminUserId } = req.body;
+
+    if (!uri || !description) {
+      return res.status(400).json({ msg: "Video URI and description are required" });
+    }
+
+    // Use admin user if provided, otherwise fallback
+    const userId = adminUserId || process.env.DEFAULT_ADMIN_USER_ID;
+
+    const video = await Video.create({
+      key: uri, // if you're sending Wasabi key instead of full URL
+      description,
+      title: title || "",
+      user: userId,
+      avatar: avatar || "https://cdn-icons-png.flaticon.com/128/7641/7641727.png",
+      privacy: "public",
+      allowComments: true,
+      allowDuet: true,
+      isApproved: true, // ✅ auto-approved
+    });
+
+    res.status(201).json({
+      success: true,
+      msg: "Admin video uploaded successfully",
+      video,
+    });
+  } catch (err) {
+    console.error("Admin add video error:", err);
+    res.status(500).json({ msg: "Server error while uploading admin video" });
+  }
+});
+
 
 export default router;

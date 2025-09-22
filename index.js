@@ -23,7 +23,7 @@ import userRoutes from './routes/userRoutes.js'
 import withdrawalRoutes from './routes/withdrawalRoutes.js';
 import pointsRoutes from './routes/pointsRoutes.js';
 import adRoutes from "./routes/adRoutes.js";
-
+import adminVideoRoutes from './routes/adminVideoRoutes.js';
 // Import Socket.IO setup
 import { initializeSocket } from './utils/socket.js';
 
@@ -91,6 +91,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/points', pointsRoutes);
 app.use("/api/admin/auth", adRoutes);
+app.use("/api/admin", adminVideoRoutes);
+
 
 
 app.get('/api/users/:userId', async (req, res) => {
@@ -126,6 +128,28 @@ app.get('/api/health', (req, res) => {
     },
     environment: process.env.NODE_ENV || 'development'
   });
+});
+
+// Add video optimization middleware
+app.get('/videos', async (req, res) => {
+  const { quality = '720p', limit = 10 } = req.query;
+  
+  const videos = await Video.find()
+    .limit(parseInt(limit))
+    .populate('user', 'username avatar')
+    .lean(); // Use lean() for faster queries
+    
+  // Optimize video URLs
+  const optimizedVideos = videos.map(video => ({
+    ...video,
+    url: video.url + `?quality=${quality}`,
+    user: {
+      ...video.user,
+      avatar: video.user.avatar ? optimizeImageUrl(video.user.avatar, 100) : null
+    }
+  }));
+  
+  res.json(optimizedVideos);
 });
 
 // Get live streaming stats (optional endpoint)
