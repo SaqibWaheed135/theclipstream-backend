@@ -586,25 +586,10 @@ router.get("/history", async (req, res) => {
       .skip(skip)
       .limit(limit);
 
-    // Construct screenshotUrl for each recharge using render backend URL
-    const baseUrl =  "https://theclipstream-backend.onrender.com";
-    const rechargesWithScreenshotUrl = recharges.map(recharge => {
-      if (recharge.method === "bank" && recharge.details?.transactionScreenshot) {
-        const screenshotPath = recharge.details.transactionScreenshot.path;
-        // Remove leading slash if present and construct full URL
-        const cleanPath = screenshotPath.startsWith('/') ? screenshotPath.slice(1) : screenshotPath;
-        return {
-          ...recharge.toObject(),
-          screenshotUrl: `${baseUrl}/${cleanPath}`
-        };
-      }
-      return recharge.toObject();
-    });
-
     const total = await Recharge.countDocuments(query);
 
     res.json({
-      recharges: rechargesWithScreenshotUrl,
+      recharges,
       pagination: {
         page,
         pages: Math.ceil(total / limit),
