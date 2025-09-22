@@ -422,28 +422,25 @@ router.get('/conversations/search', authMiddleware, async (req, res) => {
     }
 });
 
-// ✅ Stream media file from Wasabi using key
+// messageRoutes.js
 router.get('/file/:key', authMiddleware, async (req, res) => {
   try {
     const { key } = req.params;
 
-    const params = {
+    const url = s3.getSignedUrl('getObject', {
       Bucket: process.env.WASABI_BUCKET,
       Key: key,
-    };
-
-    // Get signed URL (short-lived)
-    const url = s3.getSignedUrl('getObject', {
-      ...params,
       Expires: 60 * 5, // 5 minutes
     });
 
-    res.json({ url });
+    return res.redirect(url); // 🔥 Browser loads file directly
   } catch (err) {
     console.error('File fetch error:', err);
     res.status(500).json({ msg: 'Could not fetch file' });
   }
 });
+
+
 
 
 export default router;
