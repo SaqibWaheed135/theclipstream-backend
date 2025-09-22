@@ -140,6 +140,9 @@ const transactionSchema = new mongoose.Schema({
     refundReason: String,
     refundedAt: Date
   },
+    refundReason: String,
+ refundedAt: Date,
+ 
   
   // Admin actions
   adminNotes: String,

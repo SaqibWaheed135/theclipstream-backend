@@ -24,6 +24,8 @@ import withdrawalRoutes from './routes/withdrawalRoutes.js';
 import pointsRoutes from './routes/pointsRoutes.js';
 import adRoutes from "./routes/adRoutes.js";
 import adminVideoRoutes from './routes/adminVideoRoutes.js';
+import rechargeRoutes from './routes/rechargeRoutes.js';
+
 // Import Socket.IO setup
 import { initializeSocket } from './utils/socket.js';
 
@@ -92,6 +94,8 @@ app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/points', pointsRoutes);
 app.use("/api/admin/auth", adRoutes);
 app.use("/api/admin", adminVideoRoutes);
+app.use('/api/recharges', rechargeRoutes); // for /api/users/points/* routes
+app.use('/api/payments', rechargeRoutes); 
 
 
 

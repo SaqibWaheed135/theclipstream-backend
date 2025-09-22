@@ -219,9 +219,11 @@ const pointsTransactionSchema = new mongoose.Schema({
     enum: ['credit', 'debit'],
     required: true
   },
-  category: {
+ // models/Points.js - Update your existing category enum
+category: {
   type: String,
   enum: [
+    // Existing categories
     'recharge',
     'gift',
     'boost',
@@ -229,10 +231,16 @@ const pointsTransactionSchema = new mongoose.Schema({
     'refund',
     'bonus',
     'admin_adjustment',
-    // add withdrawal categories
+    // Withdrawal categories
     'withdrawal_request',
     'withdrawal_approved',
-    'withdrawal_rejected'
+    'withdrawal_rejected',
+    
+    // ✅ ADD THESE NEW RECHARGE CATEGORIES
+    'recharge_request',
+    'recharge_approved',
+    'recharge_rejected',
+    'recharge_cancelled'
   ],
   required: true,
   index: true
