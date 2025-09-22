@@ -81,8 +81,7 @@ mongoose.connect(process.env.MONGO_URI, {
 });
 
 // Serve uploaded files (dev)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Routes
 app.use("/api/auth", authRoutes);
 app.use('/api/videos', videoRoutes);
