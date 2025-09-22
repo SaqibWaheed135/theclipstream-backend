@@ -21,7 +21,9 @@ import followRoutes from './routes/followRoutes.js'
 import messageRoutes from './routes/messageRoutes.js';
 import userRoutes from './routes/userRoutes.js'
 import withdrawalRoutes from './routes/withdrawalRoutes.js';
-import pointsRoutes from './routes/pointsRoutes.js'
+import pointsRoutes from './routes/pointsRoutes.js';
+import adRoutes from "./routes/adRoutes.js";
+
 // Import Socket.IO setup
 import { initializeSocket } from './utils/socket.js';
 
@@ -88,6 +90,8 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/points', pointsRoutes);
+app.use("/api/admin/auth", adRoutes);
+
 
 app.get('/api/users/:userId', async (req, res) => {
   try {
