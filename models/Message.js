@@ -3,13 +3,13 @@ import mongoose from 'mongoose';
 const messageSchema = new mongoose.Schema({
     sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     conversation: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation', required: true },
-    content: { type: String, required: true, maxLength: 1000 },
+    content: { type: String,maxLength: 1000 },
     type: { type: String, enum: ['text', 'image', 'video', 'audio', 'file'], default: 'text' },
-   fileUrl: { type: String },
-  fileSize: { type: Number },
-  fileName: { type: String },
-  fileType: { type: String }, // New field for MIME type
-key: { type: String },
+    fileUrl: { type: String },
+    fileSize: { type: Number },
+    fileName: { type: String },
+    fileType: { type: String }, // New field for MIME type
+    key: { type: String },
     readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 
     isDeleted: { type: Boolean, default: false },

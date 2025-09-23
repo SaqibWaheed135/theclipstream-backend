@@ -3,7 +3,7 @@ import authMiddleware from '../middleware/auth.js';
 import User from '../models/User.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
-import s3 from '../utils/s3.js'; // Import the same s3 config as video routes
+import s3 from '../utils/s3.js';
 import mongoose from 'mongoose';
 
 const router = express.Router();
@@ -124,7 +124,7 @@ router.get('/conversations/:conversationId/messages', authMiddleware, async (req
                 const signedUrl = await s3.getSignedUrlPromise('getObject', {
                     Bucket: process.env.WASABI_BUCKET,
                     Key: message.key,
-                    Expires: 3600, // 1 hour
+                    Expires: 3600,
                 });
                 return { ...message.toObject(), url: signedUrl };
             }
@@ -173,7 +173,7 @@ router.post('/media/signed-url', authMiddleware, async (req, res) => {
         const uploadUrl = await s3.getSignedUrlPromise('putObject', {
             Bucket: process.env.WASABI_BUCKET,
             Key: key,
-            Expires: 300, // 5 minutes
+            Expires: 300,
             ContentType: fileType,
         });
 
@@ -211,10 +211,14 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
         let messageData = {
             sender: senderId,
             conversation: conversationId,
-            content: content?.trim() || '',
             type,
             readBy: [senderId]
         };
+
+        // Only include content for text messages
+        if (type === 'text') {
+            messageData.content = content?.trim();
+        }
 
         if (['image', 'video'].includes(type)) {
             messageData.key = key;
@@ -420,7 +424,7 @@ router.get('/file/:key', authMiddleware, async (req, res) => {
         const url = await s3.getSignedUrlPromise('getObject', {
             Bucket: process.env.WASABI_BUCKET,
             Key: key,
-            Expires: 3600, // 1 hour
+            Expires: 3600,
         });
 
         res.json({ url });
