@@ -1,21 +1,12 @@
-// routes/messageRoutes.js
 import express from 'express';
 import authMiddleware from '../middleware/auth.js';
 import User from '../models/User.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
-import AWS from 'aws-sdk';
+import s3 from '../utils/s3.js'; // Import the same s3 config as video routes
 import mongoose from 'mongoose';
 
 const router = express.Router();
-
-const s3 = new AWS.S3({
-  accessKeyId: process.env.WASABI_KEY,
-  secretAccessKey: process.env.WASABI_SECRET,
-  endpoint: process.env.WASABI_ENDPOINT,
-  region: process.env.WASABI_REGION,
-  signatureVersion: "v4",
-});
 
 // Get all conversations for a user
 router.get('/conversations', authMiddleware, async (req, res) => {
@@ -105,7 +96,7 @@ router.post('/conversations', authMiddleware, async (req, res) => {
     }
 });
 
-// Get messages in a conversation - FIXED
+// Get messages in a conversation
 router.get('/conversations/:conversationId/messages', authMiddleware, async (req, res) => {
     try {
         const { conversationId } = req.params;
@@ -127,7 +118,20 @@ router.get('/conversations/:conversationId/messages', authMiddleware, async (req
             .limit(limit * 1)
             .skip((page - 1) * limit);
 
-        // FIXED: Mark messages as read - ensure userId is ObjectId, not object
+        // Generate signed URLs for media messages
+        const messagesWithUrls = await Promise.all(messages.map(async (message) => {
+            if (['image', 'video'].includes(message.type) && message.key) {
+                const signedUrl = await s3.getSignedUrlPromise('getObject', {
+                    Bucket: process.env.WASABI_BUCKET,
+                    Key: message.key,
+                    Expires: 3600, // 1 hour
+                });
+                return { ...message.toObject(), url: signedUrl };
+            }
+            return message.toObject();
+        }));
+
+        // Mark messages as read
         try {
             await Message.updateMany(
                 {
@@ -136,22 +140,21 @@ router.get('/conversations/:conversationId/messages', authMiddleware, async (req
                     readBy: { $not: { $elemMatch: { $eq: userId } } }
                 },
                 {
-                    $addToSet: { readBy: userId } // Use $addToSet to avoid duplicates
+                    $addToSet: { readBy: userId }
                 }
             );
         } catch (readError) {
             console.error('Error marking messages as read:', readError);
-            // Don't fail the request if read update fails
         }
 
-        res.json(messages.reverse());
+        res.json(messagesWithUrls.reverse());
     } catch (error) {
         console.error('Get messages error:', error);
         res.status(500).json({ msg: 'Server error' });
     }
 });
 
-// FIXED: Media signed URL generation
+// Generate signed URL for media upload
 router.post('/media/signed-url', authMiddleware, async (req, res) => {
     try {
         const { fileName, fileType } = req.body;
@@ -159,13 +162,13 @@ router.post('/media/signed-url', authMiddleware, async (req, res) => {
             return res.status(400).json({ msg: 'fileName and fileType are required' });
         }
 
-        // Validate file size and type if needed
-        const allowedTypes = ['image/', 'video/', 'audio/', 'application/pdf', 'text/', 'application/msword'];
+        // Validate file type
+        const allowedTypes = ['image/', 'video/'];
         if (!allowedTypes.some(type => fileType.startsWith(type))) {
-            return res.status(400).json({ msg: 'File type not allowed' });
+            return res.status(400).json({ msg: 'Only image and video files are allowed' });
         }
 
-        const key = `messages/${req.userId}/${Date.now()}-${fileName}`;
+        const key = `messages/${req.userId}/${Date.now()}_${fileName}`;
 
         const uploadUrl = await s3.getSignedUrlPromise('putObject', {
             Bucket: process.env.WASABI_BUCKET,
@@ -174,39 +177,18 @@ router.post('/media/signed-url', authMiddleware, async (req, res) => {
             ContentType: fileType,
         });
 
-        // FIXED: Check if WASABI_ENDPOINT starts with protocol
-        let fileUrl;
-        const endpoint = process.env.WASABI_ENDPOINT;
-        
-        if (!endpoint) {
-            throw new Error('WASABI_ENDPOINT not configured');
-        }
-
-        if (endpoint.startsWith('https://')) {
-            const endpointWithoutProtocol = endpoint.replace('https://', '');
-            fileUrl = `https://${process.env.WASABI_BUCKET}.${endpointWithoutProtocol}/${key}`;
-        } else if (endpoint.startsWith('http://')) {
-            const endpointWithoutProtocol = endpoint.replace('http://', '');
-            fileUrl = `https://${process.env.WASABI_BUCKET}.${endpointWithoutProtocol}/${key}`;
-        } else {
-            // Endpoint doesn't include protocol
-            fileUrl = `https://${process.env.WASABI_BUCKET}.${endpoint}/${key}`;
-        }
-
-        console.log('Generated URLs:', { uploadUrl: uploadUrl.substring(0, 50) + '...', fileUrl, key });
-
-        res.json({ uploadUrl, fileUrl, key });
+        res.json({ uploadUrl, key });
     } catch (err) {
         console.error('Signed URL error:', err);
         res.status(500).json({ msg: 'Could not generate signed URL', error: err.message });
     }
 });
 
-// Send a message - FIXED
+// Send a message
 router.post('/conversations/:conversationId/messages', authMiddleware, async (req, res) => {
     try {
         const { conversationId } = req.params;
-        const { content, type = 'text', fileUrl, fileSize, fileName, key, fileType } = req.body;
+        const { content, type = 'text', key, fileType, fileName } = req.body;
         const senderId = req.userId;
 
         if (!mongoose.Types.ObjectId.isValid(conversationId)) {
@@ -214,11 +196,11 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
         }
 
         if (type === 'text' && (!content || content.trim().length === 0)) {
-            return res.status(400).json({ msg: 'Message content is required' });
+            return res.status(400).json({ msg: 'Message content is required for text messages' });
         }
 
-        if (['image', 'video', 'audio', 'file'].includes(type) && (!fileUrl || !key)) {
-            return res.status(400).json({ msg: 'File URL and key are required for media messages' });
+        if (['image', 'video'].includes(type) && !key) {
+            return res.status(400).json({ msg: 'File key is required for media messages' });
         }
 
         const conversation = await Conversation.findById(conversationId);
@@ -226,21 +208,31 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
             return res.status(403).json({ msg: 'Not authorized' });
         }
 
-        // FIXED: Ensure readBy is properly initialized
-        const message = await Message.create({
+        let messageData = {
             sender: senderId,
             conversation: conversationId,
             content: content?.trim() || '',
             type,
-            fileUrl,
-            fileSize,
-            fileName,
-            fileType,
-            key,
-            readBy: [senderId] // Make sure this is an array of ObjectIds
-        });
+            readBy: [senderId]
+        };
 
+        if (['image', 'video'].includes(type)) {
+            messageData.key = key;
+            messageData.fileType = fileType;
+            messageData.fileName = fileName;
+        }
+
+        const message = await Message.create(messageData);
         await message.populate('sender', 'username avatar');
+
+        // Generate signed URL for media messages
+        if (['image', 'video'].includes(type)) {
+            message.url = await s3.getSignedUrlPromise('getObject', {
+                Bucket: process.env.WASABI_BUCKET,
+                Key: message.key,
+                Expires: 3600,
+            });
+        }
 
         conversation.lastMessage = message._id;
         conversation.updatedAt = new Date();
@@ -311,6 +303,11 @@ router.delete('/:messageId/everyone', authMiddleware, async (req, res) => {
 
         message.isDeleted = true;
         message.content = 'This message was deleted';
+        if (['image', 'video'].includes(message.type)) {
+            message.key = null;
+            message.fileType = null;
+            message.fileName = null;
+        }
         await message.save();
 
         const io = req.app.get('io');
@@ -411,7 +408,7 @@ router.get('/conversations/search', authMiddleware, async (req, res) => {
     }
 });
 
-// FIXED: Get file with better error handling
+// Get file with signed URL
 router.get('/file/:key', authMiddleware, async (req, res) => {
     try {
         const { key } = req.params;
@@ -423,10 +420,9 @@ router.get('/file/:key', authMiddleware, async (req, res) => {
         const url = await s3.getSignedUrlPromise('getObject', {
             Bucket: process.env.WASABI_BUCKET,
             Key: key,
-            Expires: 300, // 5 minutes
+            Expires: 3600, // 1 hour
         });
 
-        console.log('Generated signed URL for key:', key);
         res.json({ url });
     } catch (err) {
         console.error('File fetch error:', err);
