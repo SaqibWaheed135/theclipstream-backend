@@ -83,8 +83,27 @@ mongoose.connect(process.env.MONGO_URI, {
 });
 
 
-// Serve uploaded files (dev)
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+// Serve uploaded files with correct headers
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg")) {
+        res.setHeader("Content-Type", "image/jpeg");
+      }
+      if (filePath.endsWith(".png")) {
+        res.setHeader("Content-Type", "image/png");
+      }
+      if (filePath.endsWith(".gif")) {
+        res.setHeader("Content-Type", "image/gif");
+      }
+      // Fix ORB blocking
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    },
+  })
+);
+
 // Routes
 app.use("/api/auth", authRoutes);
 app.use('/api/videos', videoRoutes);
