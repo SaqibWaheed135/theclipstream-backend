@@ -9,14 +9,12 @@ import User from "../models/User.js";
 const router = express.Router();
 
 /**
- * USER ROUTES (no auth now)
+ * USER ROUTES
  */
-
-// Request withdrawal
 router.post(
   "/request",
   [
-    authMiddleware,  // ✅ pulls user from JWT
+    authMiddleware,
     [
       body("amount", "Amount is required").isNumeric().isFloat({ min: 1 }),
       body("pointsToDeduct", "Points to deduct is required").isNumeric(),
@@ -34,15 +32,13 @@ router.post(
       }
 
       const { amount, pointsToDeduct, method, details } = req.body;
-      const userId = req.user.id; // ✅ from auth middleware
+      const userId = req.user.id;
 
-      // Check points balance
       const userPoints = await PointsBalance.findOne({ userId });
       if (!userPoints || userPoints.balance < pointsToDeduct) {
         return res.status(400).json({ msg: "Insufficient points for this withdrawal" });
       }
 
-      // Minimum withdrawal rules
       const minimumLimits = { paypal: 10, bank: 25, card: 5 };
       if (amount < minimumLimits[method]) {
         return res.status(400).json({
@@ -50,13 +46,11 @@ router.post(
         });
       }
 
-      // Prevent multiple pending
       const pending = await Withdrawal.findOne({ userId, status: "pending" });
       if (pending) {
         return res.status(400).json({ msg: "You already have a pending withdrawal request" });
       }
 
-      // Create request
       const requestId = `WD${Date.now()}${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
       const withdrawal = new Withdrawal({
         userId,
@@ -74,7 +68,6 @@ router.post(
       });
       await withdrawal.save();
 
-      // Log transaction (not deduct yet)
       const tx = new PointsTransaction({
         userId,
         transactionId: requestId,
@@ -106,8 +99,6 @@ router.post(
   }
 );
 
-// Withdrawal history
-// Withdrawal history
 router.get("/history", async (req, res) => {
   try {
     const { userId } = req.query;
@@ -117,7 +108,7 @@ router.get("/history", async (req, res) => {
 
     let query = {};
     if (userId) {
-      query.userId = userId; // user mode
+      query.userId = userId;
     }
 
     const withdrawals = await Withdrawal.find(query)
@@ -126,10 +117,21 @@ router.get("/history", async (req, res) => {
       .skip(skip)
       .limit(limit);
 
+    // Fetch user balance for each withdrawal
+    const withdrawalsWithBalance = await Promise.all(
+      withdrawals.map(async (withdrawal) => {
+        const userPoints = await PointsBalance.findOne({ userId: withdrawal.userId });
+        return {
+          ...withdrawal.toObject(),
+          userBalance: userPoints ? userPoints.balance : 0,
+        };
+      })
+    );
+
     const total = await Withdrawal.countDocuments(query);
 
     res.json({
-      withdrawals,
+      withdrawals: withdrawalsWithBalance,
       pagination: {
         page,
         pages: Math.ceil(total / limit),
@@ -144,8 +146,6 @@ router.get("/history", async (req, res) => {
   }
 });
 
-
-// Cancel withdrawal
 router.post("/cancel/:id", async (req, res) => {
   try {
     const withdrawal = await Withdrawal.findOne({
@@ -167,10 +167,8 @@ router.post("/cancel/:id", async (req, res) => {
 });
 
 /**
- * ADMIN ROUTES (no auth now)
+ * ADMIN ROUTES
  */
-
-
 router.post("/admin/approve/:id", async (req, res) => {
   const session = await mongoose.startSession();
   try {
@@ -186,7 +184,6 @@ router.post("/admin/approve/:id", async (req, res) => {
       return res.status(404).json({ msg: "Pending withdrawal not found" });
     }
 
-    // 1. Get PointsBalance
     const userPoints = await PointsBalance.findOne({ userId: withdrawal.userId }).session(session);
     if (!userPoints || userPoints.balance < withdrawal.pointsToDeduct) {
       await session.abortTransaction();
@@ -195,25 +192,21 @@ router.post("/admin/approve/:id", async (req, res) => {
 
     const before = userPoints.balance;
 
-    // 2. Deduct from PointsBalance
     userPoints.balance -= withdrawal.pointsToDeduct;
     userPoints.totalSpent += withdrawal.pointsToDeduct;
     await userPoints.save({ session });
 
-    // 3. Deduct from User model (mirror)
     await User.findByIdAndUpdate(
       withdrawal.userId,
-      { $inc: { points: -withdrawal.pointsToDeduct } }, // subtract directly
+      { $inc: { points: -withdrawal.pointsToDeduct } },
       { session }
     );
 
-    // 4. Update withdrawal
     withdrawal.status = "approved";
     withdrawal.approvedAt = new Date();
     withdrawal.adminNotes = req.body.notes;
     await withdrawal.save({ session });
 
-    // 5. Log transaction
     const tx = new PointsTransaction({
       userId: withdrawal.userId,
       transactionId: `${withdrawal.requestId}_APPROVED`,
@@ -242,9 +235,6 @@ router.post("/admin/approve/:id", async (req, res) => {
   }
 });
 
-
-
-// Reject
 router.post("/admin/reject/:id", async (req, res) => {
   try {
     const withdrawal = await Withdrawal.findOne({ _id: req.params.id, status: "pending" });
