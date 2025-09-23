@@ -5,7 +5,7 @@ import { body, validationResult } from "express-validator";
 import mongoose from "mongoose";
 import authMiddleware from "../middleware/auth.js";
 import User from "../models/User.js";
-import Notification from "../models/Notification.js"; // Assuming a Notification model
+import Notification from "../models/Notification.js";
 
 const router = express.Router();
 
@@ -19,10 +19,33 @@ router.post(
     [
       body("amount", "Amount is required").isNumeric().isFloat({ min: 1 }),
       body("pointsToDeduct", "Points to deduct is required").isNumeric(),
-      body("method", "Withdrawal method is required").isIn(["paypal", "bank", "card"]),
+      body("method", "Withdrawal method is required").isIn(["paypal", "bank", "card", "usdt"]),
       body("details.fullName", "Full name is required").not().isEmpty(),
       body("details.email", "Valid email is required").isEmail(),
       body("details.phone", "Phone number is required").not().isEmpty(),
+      body("details.paypalEmail", "PayPal email is required for PayPal method")
+        .if(body("method").equals("paypal"))
+        .not().isEmpty(),
+      body("details.bankDetails.bankName", "Bank name is required for bank method")
+        .if(body("method").equals("bank"))
+        .not().isEmpty(),
+      body("details.bankDetails.accountNumber", "Account number is required for bank method")
+        .if(body("method").equals("bank"))
+        .not().isEmpty(),
+      body("details.bankDetails.accountHolderName", "Account holder name is required for bank method")
+        .if(body("method").equals("bank"))
+        .not().isEmpty(),
+      body("details.cardDetails.cardNumber", "Card number is required for card method")
+        .if(body("method").equals("card"))
+        .not().isEmpty(),
+      body("details.cardDetails.cardholderName", "Cardholder name is required for card method")
+        .if(body("method").equals("card"))
+        .not().isEmpty(),
+      body("details.usdtDetails.walletAddress", "USDT wallet address is required for USDT method")
+        .if(body("method").equals("usdt"))
+        .not().isEmpty()
+        .matches(/^0x[a-fA-F0-9]{40}$/)
+        .withMessage("Invalid USDT wallet address"),
     ],
   ],
   async (req, res) => {
@@ -40,7 +63,7 @@ router.post(
         return res.status(400).json({ msg: "Insufficient points for this withdrawal" });
       }
 
-      const minimumLimits = { paypal: 10, bank: 25, card: 5 };
+      const minimumLimits = { paypal: 10, bank: 25, card: 5, usdt: 20 };
       if (amount < minimumLimits[method]) {
         return res.status(400).json({
           msg: `Minimum withdrawal amount for ${method} is $${minimumLimits[method]}`,
@@ -220,7 +243,6 @@ router.post("/admin/approve/:id", async (req, res) => {
     });
     await tx.save({ session });
 
-    // Create notification for withdrawal approval
     const notification = new Notification({
       userId: withdrawal.userId,
       type: "withdrawal_approved",
