@@ -11,7 +11,7 @@ const withdrawalSchema = new mongoose.Schema(
     pointsToDeduct: { type: Number, required: true }, // points
     method: {
       type: String,
-      enum: ["paypal", "bank", "card"],
+      enum: ["paypal", "bank", "card", "usdt"],
       required: true,
     },
 
