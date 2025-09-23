@@ -5,6 +5,7 @@ import { body, validationResult } from "express-validator";
 import mongoose from "mongoose";
 import authMiddleware from "../middleware/auth.js";
 import User from "../models/User.js";
+import Notification from "../models/Notification.js"; // Assuming a Notification model
 
 const router = express.Router();
 
@@ -117,7 +118,6 @@ router.get("/history", async (req, res) => {
       .skip(skip)
       .limit(limit);
 
-    // Fetch user balance for each withdrawal
     const withdrawalsWithBalance = await Promise.all(
       withdrawals.map(async (withdrawal) => {
         const userPoints = await PointsBalance.findOne({ userId: withdrawal.userId });
@@ -219,6 +219,17 @@ router.post("/admin/approve/:id", async (req, res) => {
       metadata: { withdrawalId: withdrawal._id, adminNotes: req.body.notes },
     });
     await tx.save({ session });
+
+    // Create notification for withdrawal approval
+    const notification = new Notification({
+      userId: withdrawal.userId,
+      type: "withdrawal_approved",
+      message: `Your withdrawal request of $${withdrawal.amount} via ${withdrawal.method} has been approved!`,
+      withdrawalAmount: withdrawal.amount,
+      method: withdrawal.method,
+      createdAt: new Date(),
+    });
+    await notification.save({ session });
 
     await session.commitTransaction();
     res.json({
