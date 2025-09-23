@@ -5,10 +5,11 @@ const messageSchema = new mongoose.Schema({
     conversation: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation', required: true },
     content: { type: String, required: true, maxLength: 1000 },
     type: { type: String, enum: ['text', 'image', 'video', 'audio', 'file'], default: 'text' },
-    fileUrl: String,
-    fileSize: Number,
-    fileName: String,
-    key: String,
+   fileUrl: { type: String },
+  fileSize: { type: Number },
+  fileName: { type: String },
+  fileType: { type: String }, // New field for MIME type
+key: { type: String },
     readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 
     isDeleted: { type: Boolean, default: false },

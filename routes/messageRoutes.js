@@ -9,12 +9,13 @@ import AWS from 'aws-sdk';
 const router = express.Router();
 
 const s3 = new AWS.S3({
-  endpoint: process.env.WASABI_ENDPOINT, // e.g. https://s3.ap-southeast-1.wasabisys.com
-  region: process.env.WASABI_REGION,     // e.g. ap-southeast-1
   accessKeyId: process.env.WASABI_KEY,
   secretAccessKey: process.env.WASABI_SECRET,
-  signatureVersion: 'v4',
+  endpoint: process.env.WASABI_ENDPOINT,
+  region: process.env.WASABI_REGION,
+  signatureVersion: "v4",
 });
+
 // Get all conversations for a user
 router.get('/conversations', authMiddleware, async (req, res) => {
     try {
@@ -158,14 +159,14 @@ router.post('/media/signed-url', authMiddleware, async (req, res) => {
     const uploadUrl = await s3.getSignedUrlPromise('putObject', {
       Bucket: process.env.WASABI_BUCKET,
       Key: key,
-      Expires: 60 * 5, // 5 minutes
+      Expires: 604800, // 5 minutes
       ContentType: fileType,
     });
 
     // Fix the file URL construction
     // Option 1: If your WASABI_ENDPOINT includes the protocol
     let fileUrl;
-    if (process.env.WASABI_ENDPOINT.startsWith('https://')) {
+    if (process.env.WASABI_.startsWith('https://')) {
       const endpointWithoutProtocol = process.env.WASABI_ENDPOINT.replace('https://', '');
       fileUrl = `https://${process.env.WASABI_BUCKET}.${endpointWithoutProtocol}/${key}`;
     } else {
@@ -193,7 +194,7 @@ router.post('/media/signed-url', authMiddleware, async (req, res) => {
 router.post('/conversations/:conversationId/messages', authMiddleware, async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const { content, type = 'text', fileUrl, fileSize, fileName, key } = req.body;
+    const { content, type = 'text', fileUrl, fileSize, fileName, key, fileType } = req.body;
     const senderId = req.userId;
 
     if (type === 'text' && (!content || content.trim().length === 0)) {
@@ -217,7 +218,8 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
       fileUrl,
       fileSize,
       fileName,
-      key, // save Wasabi object key
+      fileType, // Store fileType
+      key,
       readBy: [senderId]
     });
 
@@ -226,6 +228,15 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
     conversation.lastMessage = message._id;
     conversation.updatedAt = new Date();
     await conversation.save();
+
+    // Emit socket event
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`conversation-${conversationId}`).emit('new-message', {
+        message,
+        conversation
+      });
+    }
 
     res.status(201).json(message);
   } catch (error) {
@@ -423,24 +434,38 @@ router.get('/conversations/search', authMiddleware, async (req, res) => {
 });
 
 // messageRoutes.js
+// router.get('/file/:key', authMiddleware, async (req, res) => {
+//   try {
+//     const { key } = req.params;
+
+//     const url = s3.getSignedUrl('getObject', {
+//       Bucket: process.env.WASABI_BUCKET,
+//       Key: key,
+//       Expires: 60 * 5, // 5 minutes
+//     });
+
+//     return res.redirect(url); // 🔥 Browser loads file directly
+//   } catch (err) {
+//     console.error('File fetch error:', err);
+//     res.status(500).json({ msg: 'Could not fetch file' });
+//   }
+// });
+
 router.get('/file/:key', authMiddleware, async (req, res) => {
   try {
     const { key } = req.params;
-
     const url = s3.getSignedUrl('getObject', {
       Bucket: process.env.WASABI_BUCKET,
       Key: key,
-      Expires: 60 * 5, // 5 minutes
+      Expires: 604800,
     });
-
-    return res.redirect(url); // 🔥 Browser loads file directly
+    console.log('Signed URL for file:', url);
+    res.json({ url });
   } catch (err) {
     console.error('File fetch error:', err);
     res.status(500).json({ msg: 'Could not fetch file' });
   }
 });
-
-
 
 
 export default router;
