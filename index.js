@@ -31,6 +31,7 @@ import transferRoutes from './routes/transferRoutes.js';
 import { initializeSocket } from './utils/socket.js';
 
 const app = express();
+app.use(express.json()); // Must be before routes
 const server = createServer(app); // Create HTTP server for Socket.IO
 
 const allowedOrigins = [
@@ -81,6 +82,7 @@ mongoose.connect(process.env.MONGO_URI, {
   process.exit(1);
 });
 
+
 // Serve uploaded files (dev)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Routes
@@ -98,7 +100,7 @@ app.use("/api/admin", adminVideoRoutes);
 app.use('/api/recharges', rechargeRoutes); // for /api/users/points/* routes
 app.use('/api/payments', rechargeRoutes); 
 app.use('/api/notifications', notificationRoutes); 
-app.use('/api', transferRoutes); 
+app.use('/api/points/transfer', transferRoutes); 
 
 
 

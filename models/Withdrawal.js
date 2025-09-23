@@ -34,6 +34,9 @@ const withdrawalSchema = new mongoose.Schema(
         ifsc: { type: String },
         swiftCode: { type: String },
       },
+      usdtDetails: {
+        walletAddress: String,   // 👈 This was missing
+      },
 
       cardDetails: {
         cardNumber: { type: String },

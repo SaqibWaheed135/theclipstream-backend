@@ -9,7 +9,7 @@ const notificationSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ["withdrawal_approved", "follow_request"], // Add more types as needed
+    enum: ["withdrawal_approved", "follow_request","points_transfer_sent","points_transfer_received"], 
   },
   message: {
     type: String,
@@ -23,7 +23,7 @@ const notificationSchema = new mongoose.Schema({
   },
   method: {
     type: String,
-    enum: ["paypal", "bank", "card"],
+    enum: ["paypal", "bank", "card", "usdt"],
     required: function () {
       return this.type === "withdrawal_approved";
     },

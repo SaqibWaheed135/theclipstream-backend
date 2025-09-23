@@ -240,7 +240,9 @@ category: {
     'recharge_request',
     'recharge_approved',
     'recharge_rejected',
-    'recharge_cancelled'
+    'recharge_cancelled',
+    'points_transfer',
+    "usdt_recharge_approved"
   ],
   required: true,
   index: true
@@ -263,6 +265,14 @@ category: {
     required: true
   },
   metadata: {
+     recipientId: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'User' 
+    },
+    senderId: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'User' 
+    },
     relatedTransaction: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Transaction'

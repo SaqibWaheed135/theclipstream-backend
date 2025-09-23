@@ -372,6 +372,9 @@ import authMiddleware from "../middleware/auth.js";
 import User from "../models/User.js";
 import multer from "multer";
 import path from "path";
+import crypto from "crypto"; // add this line
+import axios from "axios";     // 👈 also needed since you are using axios.post
+
 
 // Multer setup for screenshot upload
 const storage = multer.diskStorage({
@@ -399,6 +402,19 @@ const upload = multer({
 
 const router = express.Router();
 
+// const USDT_CONFIG = {
+//   apiUrl: process.env.USDT_API_URL || "https://your-usdt-payment-gateway.com/api",
+//   apiKey: process.env.USDT_API_KEY || "your-api-key",
+//   secretKey: process.env.USDT_SECRET_KEY || "your-secret-key",
+//   callbackUrl: process.env.USDT_CALLBACK_URL || "https://yourdomain.com/api/recharges/usdt/callback",
+//   usdtToPointsRate: 10, // 1 USDT = 10 points
+// };
+const USDT_CONFIG = {
+  receiveWallet: "TNPfwe8tbnU4dXBKgoJAuk4P4Dx7MivRjD",
+  usdtToPointsRate: 10, // 1 USDT = 10 points
+  orderExpiryMinutes: 15,
+};
+
 // Helper function to parse FormData details
 const parseFormDataDetails = (req) => {
   try {
@@ -412,6 +428,267 @@ const parseFormDataDetails = (req) => {
     return {};
   }
 };
+
+// Generate signature for USDT payments
+const generateSignature = (data, secretKey) => {
+  const sortedParams = Object.keys(data)
+    .sort()
+    .map(key => `${key}=${data[key]}`)
+    .join('&');
+  
+  return crypto
+    .createHmac('sha256', secretKey)
+    .update(sortedParams)
+    .digest('hex');
+};
+/**
+ * USDT PAYMENT ROUTES
+ */
+
+// Create USDT payment order
+router.post("/usdt/create-order", authMiddleware, [
+  body("amount", "Amount is required").isNumeric().isFloat({ min: 1 }),
+], async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const userId = req.user.id;
+    const parsedAmount = parseFloat(amount);
+
+    if (parsedAmount < 1) {
+      return res.status(400).json({ msg: "Minimum USDT recharge amount is 1" });
+    }
+
+    // Only allow one pending at a time
+    const pending = await Recharge.findOne({ userId, method: "usdt", status: "pending" });
+    if (pending) {
+      return res.status(400).json({ msg: "You already have a pending USDT payment" });
+    }
+
+    // 🔹 Generate unique fractional suffix (4 random digits)
+    const uniqueSuffix = (Math.floor(Math.random() * 9000) + 1000) / 1e6; // e.g. 0.004321
+    const finalAmount = parseFloat((parsedAmount + uniqueSuffix).toFixed(6));
+
+    // Calculate points
+    const pointsToAdd = parsedAmount * USDT_CONFIG.usdtToPointsRate; 
+    // points based on original requested amount, NOT the unique cents
+
+    // Generate unique order ID
+    const requestId = `USDT${Date.now()}${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+    const expiresAt = new Date(Date.now() + USDT_CONFIG.orderExpiryMinutes * 60 * 1000);
+
+    const recharge = new Recharge({
+      userId,
+      requestId,
+      amount: finalAmount, // 🔹 store final unique amount
+      pointsToAdd,
+      method: "usdt",
+      status: "pending",
+      details: {
+        usdtAmount: finalAmount,
+        requestedAmount: parsedAmount, // save original requested separately
+        exchangeRate: USDT_CONFIG.usdtToPointsRate,
+        walletAddress: USDT_CONFIG.receiveWallet,
+        transactionHash: "",
+      },
+      requestedAt: new Date(),
+      expiresAt,
+      metadata: { paymentGateway: "direct_tronscan" },
+    });
+
+    await recharge.save();
+
+    res.json({
+      success: true,
+      msg: "USDT payment order created successfully",
+      data: {
+        orderId: requestId,
+        amount: finalAmount, // 🔹 user sees the unique amount
+        originalAmount: parsedAmount,
+        pointsToAdd,
+        walletAddress: USDT_CONFIG.receiveWallet,
+        expiresAt,
+      },
+    });
+  } catch (err) {
+    console.error("USDT order creation error:", err);
+    res.status(500).json({ msg: "Server error", errors: [{ msg: err.message }] });
+  }
+});
+
+
+router.post("/usdt/check-payment", authMiddleware, async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ msg: "Order ID is required" });
+    }
+
+    const recharge = await Recharge.findOne({
+      requestId: orderId,
+      userId: req.user.id,
+      method: "usdt",
+    });
+
+    if (!recharge) {
+      return res.status(404).json({ msg: "Order not found" });
+    }
+
+    if (recharge.status === "approved") {
+      return res.json({ success: true, status: "approved", data: recharge });
+    }
+
+    if (new Date() > recharge.expiresAt) {
+      recharge.status = "expired";
+      await recharge.save();
+      return res.json({ success: false, status: "expired", msg: "Order expired" });
+    }
+
+    // Query TronGrid
+    const url = `https://api.trongrid.io/v1/accounts/${USDT_CONFIG.receiveWallet}/transactions/trc20?limit=50`;
+    const tronRes = await axios.get(url, {
+      headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" },
+      timeout: 10000,
+    });
+
+    const transfers = tronRes.data?.data || [];
+    const expectedAmount = Number(recharge.amount);
+    const expectedUnits = BigInt(Math.round(expectedAmount * 1e6)); // USDT has 6 decimals
+    const startTime = new Date(recharge.requestedAt).getTime();
+    const endTime = new Date(recharge.expiresAt).getTime();
+
+    const match = transfers.find((tx) => {
+      const to = (tx.to || "").toLowerCase();
+      if (to !== USDT_CONFIG.receiveWallet.toLowerCase()) return false;
+
+      // Only accept official USDT contract
+      if (!tx.token_info || tx.token_info.contract_address !== "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj") {
+        return false;
+      }
+
+      // Compare amount
+      let rawVal = tx.value || "0";
+      let valueBigInt = BigInt(rawVal.toString());
+      if (valueBigInt !== expectedUnits) return false;
+
+      // Check timestamp (TronGrid provides block_timestamp in ms)
+      const txTime = tx.block_timestamp;
+      if (txTime < startTime || txTime > endTime) return false;
+
+      return true;
+    });
+
+    if (match) {
+      const txHash = match.transaction_id;
+
+      await approveUsdtPayment(recharge, {
+        transaction_hash: txHash,
+        amount: recharge.amount,
+        status: "paid",
+      });
+
+      return res.json({
+        success: true,
+        status: "approved",
+        msg: "Payment confirmed",
+        data: {
+          orderId: recharge.requestId,
+          amount: recharge.amount,
+          pointsAdded: recharge.pointsToAdd,
+          transactionHash: txHash,
+        },
+      });
+    }
+
+    res.json({
+      success: false,
+      status: "pending",
+      msg: "Payment not yet detected",
+      data: {
+        orderId: recharge.requestId,
+        amount: recharge.amount,
+        walletAddress: recharge.details.walletAddress,
+      },
+    });
+  } catch (err) {
+    console.error("Payment check error:", err);
+    res.status(500).json({ msg: "Server error", errors: [{ msg: err.message }] });
+  }
+});
+
+
+
+
+
+// Helper function to approve USDT payment
+async function approveUsdtPayment(recharge, paymentData) {
+  const session = await mongoose.startSession();
+  try {
+    session.startTransaction();
+
+    // 1. Get or create PointsBalance
+    let userPoints = await PointsBalance.findOne({ userId: recharge.userId }).session(session);
+    if (!userPoints) {
+      userPoints = new PointsBalance({ 
+        userId: recharge.userId, 
+        balance: 0,
+        totalEarned: 0 
+      });
+      await userPoints.save({ session });
+    }
+    
+    const before = userPoints.balance;
+
+    // 2. Add to PointsBalance
+    userPoints.balance += recharge.pointsToAdd;
+    userPoints.totalEarned += recharge.pointsToAdd;
+    await userPoints.save({ session });
+
+    // 3. Add to User model (mirror)
+    await User.findByIdAndUpdate(
+      recharge.userId,
+      { $inc: { points: recharge.pointsToAdd } },
+      { session }
+    );
+
+    // 4. Update recharge
+    recharge.status = "approved";
+    recharge.approvedAt = new Date();
+    recharge.details.transactionHash = paymentData.transaction_hash;
+    recharge.details.confirmedAmount = paymentData.amount;
+    recharge.adminNotes = "Auto-approved via USDT payment";
+    await recharge.save({ session });
+
+    // 5. Log transaction
+    const tx = new PointsTransaction({
+      userId: recharge.userId,
+      transactionId: `${recharge.requestId}_USDT_APPROVED`,
+      type: "credit",
+      category: "usdt_recharge_approved",
+      amount: recharge.pointsToAdd,
+      balanceBefore: before,
+      balanceAfter: userPoints.balance,
+      description: `USDT Recharge: ${recharge.amount} USDT`,
+      metadata: { 
+        rechargeId: recharge._id,
+        transactionHash: paymentData.transaction_hash,
+        usdtAmount: recharge.amount,
+        autoApproved: true
+      },
+    });
+    await tx.save({ session });
+
+    await session.commitTransaction();
+    console.log("USDT payment approved and points added for user:", recharge.userId);
+    
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("Error approving USDT payment:", error);
+    throw error;
+  } finally {
+    session.endSession();
+  }
+}
+
 
 /**
  * USER ROUTES
@@ -586,25 +863,41 @@ router.get("/history", async (req, res) => {
       .skip(skip)
       .limit(limit);
 
-    // Construct screenshotUrl for each recharge using render backend URL
     const baseUrl = "https://theclipstream-backend.onrender.com";
-    const rechargesWithScreenshotUrl = recharges.map(recharge => {
-      if (recharge.method === "bank" && recharge.details?.transactionScreenshot) {
-        const screenshotPath = recharge.details.transactionScreenshot.path;
-        // Remove leading slash if present and construct full URL
-        const cleanPath = screenshotPath.startsWith('/') ? screenshotPath.slice(1) : screenshotPath;
+
+    // 🔹 Add screenshot + balance
+    const rechargesWithBalance = await Promise.all(
+      recharges.map(async (recharge) => {
+        // Build screenshot URL
+        let screenshotUrl = null;
+        if (
+          recharge.method === "bank" &&
+          recharge.details?.transactionScreenshot
+        ) {
+          const screenshotPath = recharge.details.transactionScreenshot.path;
+          const cleanPath = screenshotPath.startsWith("/")
+            ? screenshotPath.slice(1)
+            : screenshotPath;
+          screenshotUrl = `${baseUrl}/${cleanPath}`;
+        }
+
+        // Fetch user balance from PointsBalance
+        const userPoints = await PointsBalance.findOne({
+          userId: recharge.userId,
+        });
+
         return {
           ...recharge.toObject(),
-          screenshotUrl: `${baseUrl}/${cleanPath}`
+          screenshotUrl,
+          userBalance: userPoints ? userPoints.balance : 0, // ✅ balance included
         };
-      }
-      return recharge.toObject();
-    });
+      })
+    );
 
     const total = await Recharge.countDocuments(query);
 
     res.json({
-      recharges: rechargesWithScreenshotUrl,
+      recharges: rechargesWithBalance,
       pagination: {
         page,
         pages: Math.ceil(total / limit),
@@ -618,6 +911,7 @@ router.get("/history", async (req, res) => {
     res.status(500).json({ msg: "Server error" });
   }
 });
+
 
 // Cancel recharge
 router.post("/cancel/:id", async (req, res) => {
