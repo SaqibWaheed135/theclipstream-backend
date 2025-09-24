@@ -36,35 +36,19 @@ export const debugCredentials = () => {
 
 export const generateStreamDetails = async (streamId, userId) => {
   try {
-    console.log('Raw LIVEKIT_URL:', LIVEKIT_URL);
-    
     if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
       throw new Error('Missing LiveKit environment variables');
     }
 
-    // Validate URL
-    const validatedUrl = validateLiveKitURL(LIVEKIT_URL);
-    console.log('Validated LIVEKIT_URL:', validatedUrl);
-
-    const roomService = new RoomServiceClient(validatedUrl, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+    const roomService = new RoomServiceClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
     const roomName = `${streamId}-${userId}`;
-    console.log('Creating LiveKit room with name:', roomName);
 
-    // Create LiveKit room with timeout
-    const room = await Promise.race([
-      roomService.createRoom({
-        name: roomName,
-        emptyTimeout: 300,
-        maxParticipants: 100,
-      }),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Room creation timeout after 10 seconds')), 10000)
-      )
-    ]);
+    const room = await roomService.createRoom({
+      name: roomName,
+      emptyTimeout: 300,
+      maxParticipants: 100,
+    });
 
-    console.log('Room created successfully:', room.sid);
-
-    // Generate publisher token
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
       identity: userId,
     });
@@ -76,34 +60,14 @@ export const generateStreamDetails = async (streamId, userId) => {
     });
     
     const publishToken = at.toJwt();
-    console.log('Generated publishToken successfully, type:', typeof publishToken, 'length:', publishToken?.length);
-
-    // Basic validation
-    if (!publishToken) {
-      throw new Error('JWT token generation returned null/undefined');
-    }
-    
-    if (typeof publishToken !== 'string') {
-      throw new Error(`JWT token is not a string, got: ${typeof publishToken}`);
-    }
 
     return {
-      roomUrl: validatedUrl,
+      roomUrl: LIVEKIT_URL,
       roomSid: room.sid,
       publishToken: publishToken,
     };
   } catch (error) {
-    console.error('LiveKit stream creation error:', error);
-    
-    // Provide more specific error messages
-    if (error.code === 'ENOTFOUND') {
-      throw new Error(`Cannot connect to LiveKit server. Check your LIVEKIT_URL: ${LIVEKIT_URL}`);
-    } else if (error.message.includes('timeout')) {
-      throw new Error('LiveKit server connection timeout. Please try again.');
-    } else if (error.message.includes('Unauthorized')) {
-      throw new Error('Invalid LiveKit API credentials');
-    }
-    
+    console.error('LiveKit error:', error);
     throw new Error(`Failed to create live stream: ${error.message}`);
   }
 };
