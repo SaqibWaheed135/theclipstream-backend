@@ -1,8 +1,8 @@
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 
-const LIVEKIT_URL = "wss://theclipstream-q0jt88zr.livekit.cloude";
-const LIVEKIT_API_KEY = "APIQNh9qgZftA9E";
-const LIVEKIT_API_SECRET = "jMHFq7jtcmmuXVsdpuTZInYpSrX12vPvVsc9p9x2vML";
+const LIVEKIT_URL = 'wss://theclipstream-q0jt88zr.livekit.cloud';
+const LIVEKIT_API_KEY = 'APIQNh9qgZftA9E';
+const LIVEKIT_API_SECRET = 'jMHFq7jtcmmuXVsdpuTZInYpSrX12vPvVsc9p9x2vML';
 
 export const generateStreamDetails = async (streamId, userId) => {
   try {
