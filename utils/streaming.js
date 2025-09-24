@@ -36,8 +36,6 @@ export const debugCredentials = () => {
 
 export const generateStreamDetails = async (streamId, userId) => {
   try {
-    debugCredentials(); // Add this line for debugging
-    
     console.log('Raw LIVEKIT_URL:', LIVEKIT_URL);
     
     if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
@@ -77,38 +75,17 @@ export const generateStreamDetails = async (streamId, userId) => {
       canSubscribe: true,
     });
     
-    let publishToken;
-    try {
-      publishToken = at.toJwt();
-      console.log('JWT generation successful');
-      console.log('Token type:', typeof publishToken);
-      console.log('Token length:', publishToken ? publishToken.length : 'null');
-      console.log('Token preview:', publishToken ? publishToken.substring(0, 50) + '...' : 'null');
-    } catch (jwtError) {
-      console.error('JWT generation failed:', jwtError);
-      throw new Error(`JWT generation failed: ${jwtError.message}`);
-    }
-    
-    // More specific validation
+    const publishToken = at.toJwt();
+    console.log('Generated publishToken successfully, type:', typeof publishToken, 'length:', publishToken?.length);
+
+    // Basic validation
     if (!publishToken) {
-      throw new Error('JWT token is null or undefined');
+      throw new Error('JWT token generation returned null/undefined');
     }
     
     if (typeof publishToken !== 'string') {
-      throw new Error(`JWT token has wrong type: ${typeof publishToken}`);
+      throw new Error(`JWT token is not a string, got: ${typeof publishToken}`);
     }
-    
-    if (publishToken.length < 10) {
-      throw new Error(`JWT token too short: ${publishToken.length} characters`);
-    }
-    
-    // Basic JWT format validation (should have 3 parts separated by dots)
-    const tokenParts = publishToken.split('.');
-    if (tokenParts.length !== 3) {
-      throw new Error(`Invalid JWT format: expected 3 parts, got ${tokenParts.length}`);
-    }
-    
-    console.log('Token validation passed');
 
     return {
       roomUrl: validatedUrl,
