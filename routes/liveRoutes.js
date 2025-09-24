@@ -36,8 +36,18 @@ router.post('/create', authMiddleware, async (req, res) => {
       streams: [],
     });
 
-    const mainStream = await generateStreamDetails(liveStream._id, req.userId);
+    // Save the stream first to get the ID
+    await liveStream.save();
+
+    const mainStream = await generateStreamDetails(liveStream._id.toString(), req.userId);
     console.log('Main stream details:', mainStream);
+
+    // Ensure we have a valid token
+    if (!mainStream.publishToken || typeof mainStream.publishToken !== 'string') {
+      console.error('Invalid publishToken generated:', mainStream.publishToken);
+      await LiveStream.findByIdAndDelete(liveStream._id);
+      return res.status(500).json({ msg: 'Failed to generate stream token' });
+    }
 
     liveStream.streams.push({
       user: req.userId,
@@ -52,11 +62,11 @@ router.post('/create', authMiddleware, async (req, res) => {
 
     const responseData = {
       streamId: liveStream._id,
-      publishToken: mainStream.publishToken,
+      publishToken: mainStream.publishToken, // This should be a JWT string
       roomUrl: mainStream.roomUrl,
       stream: liveStream,
     };
-    console.log('Create route response:', responseData);
+    console.log('Create route response - publishToken type:', typeof responseData.publishToken);
 
     res.status(201).json(responseData);
   } catch (error) {
@@ -64,7 +74,6 @@ router.post('/create', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: `Could not create live stream: ${error.message}` });
   }
 });
-
 
 // Add co-host
 router.post('/:streamId/add-cohost', authMiddleware, async (req, res) => {
@@ -84,7 +93,7 @@ router.post('/:streamId/add-cohost', authMiddleware, async (req, res) => {
       return res.status(400).json({ msg: 'Already a host' });
     }
 
-    const newStream = await generateStreamDetails(liveStream._id, userId);
+    const newStream = await generateStreamDetails(liveStream._id.toString(), userId);
     liveStream.streams.push({
       user: userId,
       joinedAt: new Date(),
@@ -99,7 +108,7 @@ router.post('/:streamId/add-cohost', authMiddleware, async (req, res) => {
     res.json({
       msg: 'Co-host added',
       stream: liveStream,
-      publishToken: newStream.publishToken, // For co-host WebRTC
+      publishToken: newStream.publishToken,
       roomUrl: newStream.roomUrl,
     });
   } catch (error) {
@@ -144,18 +153,32 @@ router.post('/:streamId/end', authMiddleware, async (req, res) => {
   }
 });
 
-// Get viewer token for LiveKit
-router.get('/:streamId/token', authMiddleware, async (req, res) => {
+// Get viewer token for LiveKit - FIXED
+router.get('/:streamId/token', async (req, res) => {
   try {
     const liveStream = await LiveStream.findById(req.params.streamId);
     if (!liveStream) {
       return res.status(404).json({ msg: 'Live stream not found' });
     }
 
-    const viewerToken = generateViewerToken(liveStream._id.toString(), req.userId);
+    // Use the first stream's room for viewer token
+    const mainStream = liveStream.streams[0];
+    if (!mainStream) {
+      return res.status(404).json({ msg: 'No active stream found' });
+    }
+
+    // Generate viewer token with the room name (streamId-userId format)
+    const roomName = `${req.params.streamId}-${liveStream.streamer}`;
+    const viewerId = req.headers.authorization ? 
+      req.headers.authorization.replace('Bearer ', '') : 
+      `viewer-${Date.now()}`;
+    
+    const viewerToken = generateViewerToken(roomName, viewerId);
+    
     res.json({
       viewerToken,
-      roomUrl: process.env.LIVEKIT_URL, // WebRTC URL for viewers
+      roomUrl: process.env.LIVEKIT_URL,
+      roomName: roomName
     });
   } catch (error) {
     console.error('Get viewer token error:', error);
@@ -185,7 +208,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get a specific live stream
+// Get a specific live stream - FIXED to include viewer token
 router.get('/:streamId', async (req, res) => {
   try {
     const liveStream = await LiveStream.findById(req.params.streamId)
@@ -194,6 +217,21 @@ router.get('/:streamId', async (req, res) => {
 
     if (!liveStream) {
       return res.status(404).json({ msg: 'Live stream not found' });
+    }
+
+    // Generate viewer token for this stream
+    const roomName = `${req.params.streamId}-${liveStream.streamer._id}`;
+    const viewerId = req.headers.authorization ? 
+      req.headers.authorization.replace('Bearer ', '') : 
+      `viewer-${Date.now()}`;
+    
+    try {
+      const viewerToken = generateViewerToken(roomName, viewerId);
+      liveStream._doc.viewerToken = viewerToken;
+      liveStream._doc.roomUrl = process.env.LIVEKIT_URL;
+    } catch (tokenError) {
+      console.error('Error generating viewer token:', tokenError);
+      // Continue without token - frontend can handle gracefully
     }
 
     res.json(liveStream);
