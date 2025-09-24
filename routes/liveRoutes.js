@@ -79,7 +79,7 @@ router.post('/create', authMiddleware, async (req, res) => {
     console.error('Create live stream error:', error);
     res.status(500).json({ msg: `Could not create live stream: ${error.message}` });
   }
-});s
+});
 
 // Add co-host
 router.post('/:streamId/add-cohost', authMiddleware, async (req, res) => {
