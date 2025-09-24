@@ -39,10 +39,6 @@ router.post('/create', authMiddleware, async (req, res) => {
     const mainStream = await generateStreamDetails(liveStream._id, req.userId);
     console.log('Main stream details:', mainStream);
 
-    if (!mainStream.publishToken || typeof mainStream.publishToken !== 'string') {
-      throw new Error('Invalid publishToken generated');
-    }
-
     liveStream.streams.push({
       user: req.userId,
       joinedAt: new Date(),
@@ -60,12 +56,7 @@ router.post('/create', authMiddleware, async (req, res) => {
       roomUrl: mainStream.roomUrl,
       stream: liveStream,
     };
-    console.log('Create route response:', {
-      streamId: responseData.streamId,
-      publishToken: responseData.publishToken.substring(0, 20) + '...', // Truncate for logs
-      roomUrl: responseData.roomUrl,
-      stream: { title: liveStream.title, streamer: liveStream.streamer }
-    });
+    console.log('Create route response:', responseData);
 
     res.status(201).json(responseData);
   } catch (error) {
