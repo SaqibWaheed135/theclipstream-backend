@@ -1,8 +1,8 @@
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 
-const LIVEKIT_URL = process.env.LIVEKIT_URL;
-const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
-const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
+const LIVEKIT_URL = "wss://theclipstream-q0jt88zr.livekit.cloud";
+const LIVEKIT_API_KEY = "APIQNh9qgZftA9E";
+const LIVEKIT_API_SECRET = "jMHFq7jtcmmuXVsdpuTZInYpSrX12vPvVsc9p9x2vML";
 
 // Validate and clean URL
 const validateLiveKitURL = (url) => {
