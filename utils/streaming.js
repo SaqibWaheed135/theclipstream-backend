@@ -1,4 +1,4 @@
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from '@livekit/server-sdk';
 
 const LIVEKIT_URL = process.env.LIVEKIT_URL;
 const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
@@ -6,13 +6,18 @@ const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
 
 export const generateStreamDetails = async (streamId, userId) => {
   try {
+    if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+      throw new Error('Missing LiveKit environment variables');
+    }
+
     const roomService = new RoomServiceClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
     const roomName = `${streamId}-${userId}`;
+    console.log('Creating LiveKit room with name:', roomName);
 
     // Create LiveKit room
     const room = await roomService.createRoom({
       name: roomName,
-      emptyTimeout: 300, // Auto-close after 5min idle
+      emptyTimeout: 300,
       maxParticipants: 100,
     });
 
@@ -26,15 +31,17 @@ export const generateStreamDetails = async (streamId, userId) => {
       canPublish: true,
       canSubscribe: true,
     });
+    const publishToken = at.toJwt();
+    console.log('Generated publishToken:', publishToken);
 
     return {
-      roomUrl: LIVEKIT_URL, // WebRTC URL for publishers/viewers
-      roomSid: room.sid, // For cleanup
-      publishToken: at.toJwt(), // Token for publishing
+      roomUrl: LIVEKIT_URL,
+      roomSid: room.sid,
+      publishToken: publishToken,
     };
   } catch (error) {
     console.error('LiveKit stream creation error:', error);
-    throw new Error('Failed to create live stream');
+    throw new Error(`Failed to create live stream: ${error.message}`);
   }
 };
 
@@ -59,9 +66,11 @@ export const generateViewerToken = (roomName, userId) => {
       canPublish: false,
       canSubscribe: true,
     });
-    return at.toJwt();
+    const viewerToken = at.toJwt();
+    console.log('Generated viewerToken:', viewerToken);
+    return viewerToken;
   } catch (error) {
     console.error('LiveKit viewer token error:', error);
-    throw new Error('Failed to generate viewer token');
+    throw new Error(`Failed to generate viewer token: ${error.message}`);
   }
 };

@@ -37,28 +37,34 @@ router.post('/create', authMiddleware, async (req, res) => {
     });
 
     const mainStream = await generateStreamDetails(liveStream._id, req.userId);
+    console.log('Main stream details:', mainStream);
+
     liveStream.streams.push({
       user: req.userId,
       joinedAt: new Date(),
-      roomUrl: mainStream.roomUrl, // WebRTC URL
-      roomSid: mainStream.roomSid, // For cleanup
+      roomUrl: mainStream.roomUrl,
+      roomSid: mainStream.roomSid,
     });
 
     await liveStream.save();
     await liveStream.populate('streamer', 'username avatar');
     await liveStream.populate('streams.user', 'username avatar');
 
-    res.status(201).json({
+    const responseData = {
       streamId: liveStream._id,
-      publishToken: mainStream.publishToken, // For WebRTC publishing
-      roomUrl: mainStream.roomUrl, // WebRTC URL
+      publishToken: mainStream.publishToken,
+      roomUrl: mainStream.roomUrl,
       stream: liveStream,
-    });
+    };
+    console.log('Create route response:', responseData);
+
+    res.status(201).json(responseData);
   } catch (error) {
     console.error('Create live stream error:', error);
-    res.status(500).json({ msg: 'Could not create live stream' });
+    res.status(500).json({ msg: `Could not create live stream: ${error.message}` });
   }
 });
+
 
 // Add co-host
 router.post('/:streamId/add-cohost', authMiddleware, async (req, res) => {
