@@ -1,7 +1,7 @@
 import express from 'express';
 import LiveStream from '../models/LiveStream.js';
 import authMiddleware from '../middleware/auth.js';
-import { generateStreamDetails, endLiveInput, generateViewerToken } from '../utils/streaming.js';
+import { generateStreamDetails, endLiveInput, generateViewerToken, testLiveKitConnection,testTokenGeneration} from '../utils/streaming.js';
 
 const router = express.Router();
 
