@@ -118,9 +118,8 @@ router.get('/conversations/:conversationId/messages', authMiddleware, async (req
             .limit(limit * 1)
             .skip((page - 1) * limit);
 
-        // Generate signed URLs for media messages
         const messagesWithUrls = await Promise.all(messages.map(async (message) => {
-            if (['image', 'video'].includes(message.type) && message.key) {
+            if (['image', 'video', 'audio'].includes(message.type) && message.key) {
                 const signedUrl = await s3.getSignedUrlPromise('getObject', {
                     Bucket: process.env.WASABI_BUCKET,
                     Key: message.key,
@@ -131,7 +130,6 @@ router.get('/conversations/:conversationId/messages', authMiddleware, async (req
             return message.toObject();
         }));
 
-        // Mark messages as read
         try {
             await Message.updateMany(
                 {
@@ -162,10 +160,9 @@ router.post('/media/signed-url', authMiddleware, async (req, res) => {
             return res.status(400).json({ msg: 'fileName and fileType are required' });
         }
 
-        // Validate file type
-        const allowedTypes = ['image/', 'video/'];
+        const allowedTypes = ['image/', 'video/', 'audio/'];
         if (!allowedTypes.some(type => fileType.startsWith(type))) {
-            return res.status(400).json({ msg: 'Only image and video files are allowed' });
+            return res.status(400).json({ msg: 'Only image, video, and audio files are allowed' });
         }
 
         const key = `messages/${req.userId}/${Date.now()}_${fileName}`;
@@ -199,7 +196,7 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
             return res.status(400).json({ msg: 'Message content is required for text messages' });
         }
 
-        if (['image', 'video'].includes(type) && !key) {
+        if (['image', 'video', 'audio'].includes(type) && !key) {
             return res.status(400).json({ msg: 'File key is required for media messages' });
         }
 
@@ -215,12 +212,11 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
             readBy: [senderId]
         };
 
-        // Only include content for text messages
         if (type === 'text') {
             messageData.content = content?.trim();
         }
 
-        if (['image', 'video'].includes(type)) {
+        if (['image', 'video', 'audio'].includes(type)) {
             messageData.key = key;
             messageData.fileType = fileType;
             messageData.fileName = fileName;
@@ -229,8 +225,7 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
         const message = await Message.create(messageData);
         await message.populate('sender', 'username avatar');
 
-        // Generate signed URL for media messages
-        if (['image', 'video'].includes(type)) {
+        if (['image', 'video', 'audio'].includes(type)) {
             message.url = await s3.getSignedUrlPromise('getObject', {
                 Bucket: process.env.WASABI_BUCKET,
                 Key: message.key,
@@ -242,7 +237,6 @@ router.post('/conversations/:conversationId/messages', authMiddleware, async (re
         conversation.updatedAt = new Date();
         await conversation.save();
 
-        // Emit socket event
         const io = req.app.get('io');
         if (io) {
             io.to(`conversation-${conversationId}`).emit('new-message', {
@@ -307,7 +301,7 @@ router.delete('/:messageId/everyone', authMiddleware, async (req, res) => {
 
         message.isDeleted = true;
         message.content = 'This message was deleted';
-        if (['image', 'video'].includes(message.type)) {
+        if (['image', 'video', 'audio'].includes(message.type)) {
             message.key = null;
             message.fileType = null;
             message.fileName = null;
