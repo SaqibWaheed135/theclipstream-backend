@@ -1,235 +1,167 @@
-// models/LiveStream.js
-import mongoose from "mongoose";
+import mongoose from 'mongoose';
 
 const liveStreamSchema = new mongoose.Schema({
   title: {
     type: String,
     required: true,
     trim: true,
-    maxLength: 100
+    maxlength: 100,
   },
   description: {
     type: String,
     trim: true,
-    maxLength: 500,
-    default: ""
+    maxlength: 500,
   },
   streamer: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true
-  },
-  status: {
-    type: String,
-    enum: ["waiting", "live", "ended", "paused"],
-    default: "waiting"
+    ref: 'User',
+    required: true,
   },
   privacy: {
     type: String,
-    enum: ["public", "private"],
-    default: "public"
+    enum: ['public', 'private', 'unlisted'],
+    default: 'public',
   },
-  // Streams array for main streamer and co-hosts
-  streams: [{
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true
-    },
-    joinedAt: {
-      type: Date,
-      default: Date.now
-    },
-    rtmpUrl: {
-      type: String,
-      required: true
-    },
-    streamKey: {
-      type: String,
-      required: true
-    },
-    playbackUrl: {
-      type: String,
-      required: true
-    }
-  }],
-  // Viewer management
+  status: {
+    type: String,
+    enum: ['live', 'ended'],
+    default: 'live',
+  },
+  startedAt: {
+    type: Date,
+    default: Date.now,
+  },
+  endedAt: {
+    type: Date,
+  },
+  duration: {
+    type: Number,
+    default: 0, // in seconds
+  },
   viewers: [{
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
-    },
-    joinedAt: {
-      type: Date,
-      default: Date.now
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
   }],
-  // Analytics
+  currentViewers: {
+    type: Number,
+    default: 0,
+  },
   totalViews: {
     type: Number,
-    default: 0
+    default: 0,
   },
   peakViewers: {
     type: Number,
-    default: 0
+    default: 0,
   },
-  heartsReceived: {
-    type: Number,
-    default: 0
-  },
-  // Timing
-  startedAt: Date,
-  endedAt: Date,
-  duration: {
-    type: Number, // in seconds
-    default: 0
-  },
-  // Interactions
   comments: [{
     user: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
+      ref: 'User',
     },
     text: {
       type: String,
       required: true,
-      maxLength: 200
+      trim: true,
+      maxlength: 200,
     },
     timestamp: {
       type: Date,
-      default: Date.now
-    }
+      default: Date.now,
+    },
   }],
-  // Moderation
+  heartsReceived: {
+    type: Number,
+    default: 0,
+  },
+  streams: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    joinedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    roomUrl: {
+      type: String,
+      required: true, // WebRTC URL
+    },
+    roomSid: {
+      type: String, // For LiveKit room cleanup
+    },
+  }],
   reports: [{
     reporter: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
+      ref: 'User',
+      required: true,
     },
     reason: {
       type: String,
-      required: true
+      required: true,
+      trim: true,
     },
     reportedAt: {
       type: Date,
-      default: Date.now
-    }
+      default: Date.now,
+    },
   }],
-  isBlocked: {
-    type: Boolean,
-    default: false
-  },
-  blockedReason: String,
-  // Technical details
-  streamKey: String,
-  rtmpUrl: String,
-  // Thumbnail for ended streams
-  thumbnail: String,
-  // Save as video after stream ends
-  saveAsVideo: {
-    type: Boolean,
-    default: true
-  },
-  savedVideoId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Video"
-  }
 }, {
   timestamps: true,
   indexes: [
     { key: { streamer: 1, status: 1 } },
     { key: { status: 1, createdAt: -1 } },
-    { key: { privacy: 1, status: 1 } }
-  ]
+    { key: { privacy: 1, status: 1 } },
+  ],
 });
 
-// Virtual for current viewer count
-liveStreamSchema.virtual('currentViewers').get(function() {
-  return this.viewers ? this.viewers.length : 0;
+// Virtual for formatted duration
+liveStreamSchema.virtual('formattedDuration').get(function () {
+  const hours = Math.floor(this.duration / 3600);
+  const minutes = Math.floor((this.duration % 3600) / 60);
+  const seconds = this.duration % 60;
+  return `${hours > 0 ? hours + 'h ' : ''}${minutes > 0 ? minutes + 'm ' : ''}${seconds}s`;
 });
 
-// Virtual for stream duration in real-time
-liveStreamSchema.virtual('currentDuration').get(function() {
-  if (this.status === 'live' && this.startedAt) {
-    return Math.floor((Date.now() - this.startedAt.getTime()) / 1000);
-  }
-  return this.duration || 0;
-});
-
-// Method to add viewer
-liveStreamSchema.methods.addViewer = function(userId) {
-  const existingViewer = this.viewers.find(v => 
-    v.user && v.user.toString() === userId
-  );
-  
-  if (!existingViewer) {
-    this.viewers.push({
-      user: userId,
-      joinedAt: new Date()
-    });
-    
+// Methods for viewer and comment management
+liveStreamSchema.methods.addViewer = async function (userId) {
+  if (userId && !this.viewers.includes(userId)) {
+    this.viewers.push(userId);
+    this.currentViewers += 1;
     this.totalViews += 1;
-    
-    // Update peak viewers
-    if (this.viewers.length > this.peakViewers) {
-      this.peakViewers = this.viewers.length;
+    if (this.currentViewers > this.peakViewers) {
+      this.peakViewers = this.currentViewers;
     }
+    await this.save();
   }
-  
-  return this.save();
 };
 
-// Method to remove viewer
-liveStreamSchema.methods.removeViewer = function(userId) {
-  this.viewers = this.viewers.filter(v => 
-    !v.user || v.user.toString() !== userId
-  );
-  
-  return this.save();
+liveStreamSchema.methods.removeViewer = async function (userId) {
+  if (userId) {
+    this.viewers = this.viewers.filter((id) => id.toString() !== userId.toString());
+    this.currentViewers = Math.max(0, this.currentViewers - 1);
+    await this.save();
+  }
 };
 
-// Method to add comment
-liveStreamSchema.methods.addComment = function(userId, text) {
+liveStreamSchema.methods.addComment = async function (userId, text) {
   this.comments.push({
-    user: userId,
-    text: text.trim(),
-    timestamp: new Date()
+    user: userId || null,
+    text,
+    timestamp: new Date(),
   });
-  
-  return this.save();
+  await this.save();
 };
 
-// Method to increment hearts
-liveStreamSchema.methods.addHeart = function() {
+liveStreamSchema.methods.addHeart = async function () {
   this.heartsReceived += 1;
-  return this.save();
+  await this.save();
 };
 
-// Static method to get active streams
-liveStreamSchema.statics.getActiveStreams = function(limit = 20) {
-  return this.find({ 
-    status: 'live', 
-    privacy: 'public',
-    isBlocked: false
-  })
-    .populate('streamer', 'username avatar')
-    .populate('streams.user', 'username avatar')
-    .sort({ startedAt: -1 })
-    .limit(limit);
-};
-
-// Pre-save hook to calculate duration on stream end
-liveStreamSchema.pre('save', function(next) {
-  if (this.isModified('status') && this.status === 'ended' && this.startedAt && !this.duration) {
-    this.duration = Math.floor((Date.now() - this.startedAt.getTime()) / 1000);
-    this.endedAt = new Date();
-  }
-  next();
-});
-
-// Ensure virtual fields are serialized
 liveStreamSchema.set('toJSON', { virtuals: true });
 liveStreamSchema.set('toObject', { virtuals: true });
 
-const LiveStream = mongoose.model("LiveStream", liveStreamSchema);
+const LiveStream = mongoose.model('LiveStream', liveStreamSchema);
 export default LiveStream;
