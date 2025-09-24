@@ -1,4 +1,4 @@
-import { AccessToken, RoomServiceClient } from '@livekit/server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 
 const LIVEKIT_URL = process.env.LIVEKIT_URL;
 const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
