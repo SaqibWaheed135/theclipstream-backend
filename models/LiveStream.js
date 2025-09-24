@@ -29,7 +29,30 @@ const liveStreamSchema = new mongoose.Schema({
     enum: ["public", "private"],
     default: "public"
   },
-  
+  // Streams array for main streamer and co-hosts
+  streams: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
+    joinedAt: {
+      type: Date,
+      default: Date.now
+    },
+    rtmpUrl: {
+      type: String,
+      required: true
+    },
+    streamKey: {
+      type: String,
+      required: true
+    },
+    playbackUrl: {
+      type: String,
+      required: true
+    }
+  }],
   // Viewer management
   viewers: [{
     user: {
@@ -41,7 +64,6 @@ const liveStreamSchema = new mongoose.Schema({
       default: Date.now
     }
   }],
-  
   // Analytics
   totalViews: {
     type: Number,
@@ -55,7 +77,6 @@ const liveStreamSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  
   // Timing
   startedAt: Date,
   endedAt: Date,
@@ -63,7 +84,6 @@ const liveStreamSchema = new mongoose.Schema({
     type: Number, // in seconds
     default: 0
   },
-  
   // Interactions
   comments: [{
     user: {
@@ -80,7 +100,6 @@ const liveStreamSchema = new mongoose.Schema({
       default: Date.now
     }
   }],
-  
   // Moderation
   reports: [{
     reporter: {
@@ -96,27 +115,21 @@ const liveStreamSchema = new mongoose.Schema({
       default: Date.now
     }
   }],
-  
   isBlocked: {
     type: Boolean,
     default: false
   },
-  
   blockedReason: String,
-  
   // Technical details
   streamKey: String,
   rtmpUrl: String,
-  
   // Thumbnail for ended streams
   thumbnail: String,
-  
   // Save as video after stream ends
   saveAsVideo: {
     type: Boolean,
     default: true
   },
-  
   savedVideoId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Video"
@@ -124,9 +137,9 @@ const liveStreamSchema = new mongoose.Schema({
 }, {
   timestamps: true,
   indexes: [
-    { streamer: 1, status: 1 },
-    { status: 1, createdAt: -1 },
-    { privacy: 1, status: 1 }
+    { key: { streamer: 1, status: 1 } },
+    { key: { status: 1, createdAt: -1 } },
+    { key: { privacy: 1, status: 1 } }
   ]
 });
 
@@ -200,6 +213,7 @@ liveStreamSchema.statics.getActiveStreams = function(limit = 20) {
     isBlocked: false
   })
     .populate('streamer', 'username avatar')
+    .populate('streams.user', 'username avatar')
     .sort({ startedAt: -1 })
     .limit(limit);
 };

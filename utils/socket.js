@@ -1,4 +1,3 @@
-// utils/socket.js (Enhanced with messaging and follow system)
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import LiveStream from '../models/LiveStream.js';
@@ -6,13 +5,21 @@ import User from '../models/User.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
 
-
 let io;
+
+// Placeholder function for generating stream details
+const generateStreamDetails = (streamId, userId) => {
+  return {
+    rtmpUrl: `rtmp://theclipstream-backend.onrender.com/live`,
+    streamKey: `${streamId}-${userId}`,
+    playbackUrl: `https://theclipstream-backend.onrender.com/live/${streamId}-${userId}.m3u8`
+  };
+};
 
 const initializeSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: "https://theclipstream.netlify.app" || "http://localhost:5173/",
+      origin: ["https://theclipstream.netlify.app", "http://localhost:5173"],
       methods: ["GET", "POST"],
       credentials: true
     }
@@ -76,13 +83,14 @@ const initializeSocket = (server) => {
       }
     }
 
-    // === LIVE STREAMING EVENTS (Previous code) ===
+    // === LIVE STREAMING EVENTS ===
     socket.on('join-stream', async (data) => {
       try {
         const { streamId, isStreamer } = data;
         
         const liveStream = await LiveStream.findById(streamId)
-          .populate('streamer', 'username avatar');
+          .populate('streamer', 'username avatar')
+          .populate('streams.user', 'username avatar');
         
         if (!liveStream) {
           socket.emit('error', { message: 'Live stream not found' });
@@ -128,9 +136,179 @@ const initializeSocket = (server) => {
       }
     });
 
+    socket.on('leave-stream', async ({ streamId }) => {
+      try {
+        const liveStream = await LiveStream.findById(streamId);
+        if (liveStream && socket.isAuthenticated) {
+          await liveStream.removeViewer(socket.userId);
+          io.to(`stream-${streamId}`).emit('viewer-left', {
+            viewerCount: liveStream.currentViewers
+          });
+        }
+      } catch (error) {
+        console.error('Leave stream error:', error);
+      }
+    });
+
+    socket.on('send-comment', async (comment) => {
+      try {
+        const liveStream = await LiveStream.findById(comment.streamId);
+        if (!liveStream) {
+          socket.emit('error', { message: 'Stream not found' });
+          return;
+        }
+
+        const userId = socket.isAuthenticated ? socket.userId : null;
+        await liveStream.addComment(userId, comment.text);
+        const populatedComment = {
+          ...comment,
+          username: userId ? socket.user.username : 'Anonymous'
+        };
+        io.to(`stream-${comment.streamId}`).emit('new-comment', populatedComment);
+      } catch (error) {
+        console.error('Send comment error:', error);
+        socket.emit('error', { message: 'Could not send comment' });
+      }
+    });
+
+    socket.on('send-heart', async ({ streamId }) => {
+      try {
+        const liveStream = await LiveStream.findById(streamId);
+        if (liveStream) {
+          await liveStream.addHeart();
+          io.to(`stream-${streamId}`).emit('heart-sent');
+        }
+      } catch (error) {
+        console.error('Send heart error:', error);
+      }
+    });
+
+    socket.on('end-stream', async ({ streamId }) => {
+      try {
+        const liveStream = await LiveStream.findById(streamId);
+        if (liveStream && socket.isAuthenticated && liveStream.streamer.toString() === socket.userId) {
+          liveStream.status = 'ended';
+          liveStream.endedAt = new Date();
+          liveStream.duration = Math.floor((Date.now() - liveStream.startedAt.getTime()) / 1000);
+          await liveStream.save();
+          io.to(`stream-${streamId}`).emit('stream-ended', {
+            message: 'The stream has ended',
+            duration: liveStream.duration
+          });
+        }
+      } catch (error) {
+        console.error('End stream error:', error);
+      }
+    });
+
+    // === CO-HOST EVENTS ===
+    socket.on('request-cohost', async ({ streamId }) => {
+      try {
+        if (!socket.isAuthenticated) {
+          socket.emit('error', { message: 'Authentication required to request co-host' });
+          return;
+        }
+
+        const liveStream = await LiveStream.findById(streamId).populate('streamer', 'username avatar');
+        if (!liveStream) {
+          socket.emit('error', { message: 'Stream not found' });
+          return;
+        }
+
+        const user = await User.findById(socket.userId);
+        if (!user) {
+          socket.emit('error', { message: 'User not found' });
+          return;
+        }
+
+        // Notify the streamer
+        io.to(`stream-${streamId}`).emit('cohost-request', {
+          userId: socket.userId,
+          username: user.username,
+          avatar: user.avatar
+        });
+      } catch (error) {
+        console.error('Request co-host error:', error);
+        socket.emit('error', { message: 'Could not request to co-host' });
+      }
+    });
+
+    socket.on('approve-cohost', async ({ streamId, userId }) => {
+      try {
+        if (!socket.isAuthenticated) {
+          socket.emit('error', { message: 'Authentication required' });
+          return;
+        }
+
+        const liveStream = await LiveStream.findById(streamId);
+        if (!liveStream) {
+          socket.emit('error', { message: 'Stream not found' });
+          return;
+        }
+
+        if (liveStream.streamer.toString() !== socket.userId) {
+          socket.emit('error', { message: 'Not authorized to approve co-hosts' });
+          return;
+        }
+
+        if (liveStream.streams.some(s => s.user.toString() === userId)) {
+          socket.emit('error', { message: 'User is already a host' });
+          return;
+        }
+
+        const newStream = generateStreamDetails(streamId, userId);
+        liveStream.streams.push({
+          user: userId,
+          joinedAt: new Date(),
+          rtmpUrl: newStream.rtmpUrl,
+          streamKey: newStream.streamKey,
+          playbackUrl: newStream.playbackUrl
+        });
+
+        await liveStream.save();
+        await liveStream.populate('streams.user', 'username avatar');
+
+        io.to(`stream-${streamId}`).emit('cohost-joined', {
+          stream: liveStream
+        });
+        io.to(`user-${userId}`).emit('cohost-approved', {
+          userId,
+          rtmpUrl: newStream.rtmpUrl,
+          streamKey: newStream.streamKey,
+          playbackUrl: newStream.playbackUrl
+        });
+      } catch (error) {
+        console.error('Approve co-host error:', error);
+        socket.emit('error', { message: 'Could not approve co-host' });
+      }
+    });
+
+    socket.on('reject-cohost', async ({ streamId, userId }) => {
+      try {
+        if (!socket.isAuthenticated) {
+          socket.emit('error', { message: 'Authentication required' });
+          return;
+        }
+
+        const liveStream = await LiveStream.findById(streamId);
+        if (!liveStream) {
+          socket.emit('error', { message: 'Stream not found' });
+          return;
+        }
+
+        if (liveStream.streamer.toString() !== socket.userId) {
+          socket.emit('error', { message: 'Not authorized to reject co-hosts' });
+          return;
+        }
+
+        io.to(`user-${userId}`).emit('cohost-rejected', { userId });
+      } catch (error) {
+        console.error('Reject co-host error:', error);
+        socket.emit('error', { message: 'Could not reject co-host' });
+      }
+    });
+
     // === MESSAGING EVENTS ===
-    
-    // Join conversation room
     socket.on('join-conversation', async (data) => {
       try {
         const { conversationId } = data;
@@ -169,14 +347,12 @@ const initializeSocket = (server) => {
       }
     });
 
-    // Leave conversation room
     socket.on('leave-conversation', (data) => {
       const { conversationId } = data;
       socket.leave(`conversation-${conversationId}`);
       socket.currentConversationId = null;
     });
 
-    // Send message
     socket.on('send-message', async (data) => {
       try {
         const { conversationId, content, type = 'text' } = data;
@@ -241,18 +417,15 @@ const initializeSocket = (server) => {
         // Send push notifications to offline participants
         recipients.forEach(recipient => {
           if (!io.sockets.adapter.rooms.get(`user-${recipient._id}`)) {
-            // User is offline, could trigger push notification here
             console.log(`Send push notification to ${recipient.username}`);
           }
         });
-
       } catch (error) {
         console.error('Send message error:', error);
         socket.emit('error', { message: 'Could not send message' });
       }
     });
 
-    // Typing indicators
     socket.on('typing-start', (data) => {
       const { conversationId } = data;
       if (socket.isAuthenticated && conversationId) {
@@ -274,7 +447,6 @@ const initializeSocket = (server) => {
       }
     });
 
-    // Message read receipts
     socket.on('mark-messages-read', async (data) => {
       try {
         const { conversationId, messageIds } = data;
@@ -292,46 +464,37 @@ const initializeSocket = (server) => {
           }
         );
 
-        // Notify other participants about read receipts
         socket.to(`conversation-${conversationId}`).emit('messages-read', {
           userId: socket.userId,
           messageIds,
           readAt: new Date()
         });
-
       } catch (error) {
         console.error('Mark messages read error:', error);
       }
     });
 
     // === FOLLOW SYSTEM EVENTS ===
-    
-    // Real-time follow request notification (handled by API, but we can add extra real-time features)
     socket.on('follow-request-response', async (data) => {
       try {
-        const { requestId, action } = data; // action: 'accept' or 'reject'
+        const { requestId, action } = data;
         
         if (!socket.isAuthenticated) {
           socket.emit('error', { message: 'Authentication required' });
           return;
         }
 
-        // This would typically be handled by the API endpoint, 
-        // but we can add real-time updates here
         socket.emit('follow-request-updated', {
           requestId,
           action,
           timestamp: new Date()
         });
-
       } catch (error) {
         console.error('Follow request response error:', error);
       }
     });
 
-    // === GENERAL EVENTS ===
-
-    // Handle disconnection
+    // === DISCONNECT HANDLING ===
     socket.on('disconnect', async () => {
       console.log(`User disconnected: ${socket.userId || 'Anonymous'}`);
       
@@ -355,7 +518,6 @@ const initializeSocket = (server) => {
             const liveStream = await LiveStream.findById(socket.currentStreamId);
             if (liveStream) {
               await liveStream.removeViewer(socket.userId);
-              
               io.to(`stream-${socket.currentStreamId}`).emit('viewer-left', {
                 viewerCount: liveStream.currentViewers
               });
@@ -368,27 +530,21 @@ const initializeSocket = (server) => {
           const user = await User.findById(socket.userId).populate('followers', '_id');
           await user.setOnlineStatus(false);
           
-          // Broadcast offline status to followers
           if (user && user.followers) {
             user.followers.forEach(follower => {
               socket.to(`user-${follower._id}`).emit('user-offline', {
                 userId: socket.userId,
-                username: socket.user.username,
+                username: user.username,
                 lastSeen: user.lastSeen,
                 timestamp: new Date()
               });
             });
           }
         }
-
       } catch (error) {
         console.error('Disconnect cleanup error:', error);
       }
     });
-
-    // Previous live streaming events (send-comment, send-heart, etc.) remain the same...
-    // [Include all the live streaming events from the previous socket implementation]
-    
   });
 
   return io;

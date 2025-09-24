@@ -37,7 +37,7 @@ router.post("/create", authMiddleware, async (req, res) => {
       });
     }
 
-    const liveStream = await LiveStream.create({
+    const liveStream = new LiveStream({
       title: title.trim(),
       description: description?.trim() || "",
       streamer: req.userId,
@@ -72,7 +72,7 @@ router.post("/create", authMiddleware, async (req, res) => {
   }
 });
 
-// Add co-host (for HTTP fallback, but recommend using socket for real-time)
+// Add co-host
 router.post("/:streamId/add-cohost", authMiddleware, async (req, res) => {
   try {
     const { userId } = req.body;
@@ -100,6 +100,7 @@ router.post("/:streamId/add-cohost", authMiddleware, async (req, res) => {
     });
 
     await liveStream.save();
+    await liveStream.populate("streamer", "username avatar");
     await liveStream.populate("streams.user", "username avatar");
 
     // Emit via socket if integrated (assuming io is global)
@@ -151,6 +152,7 @@ router.get("/", async (req, res) => {
       privacy: "public"
     })
       .populate("streamer", "username avatar")
+      .populate("streams.user", "username avatar")
       .sort({ startedAt: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -183,7 +185,9 @@ router.get("/:streamId", async (req, res) => {
 // Get live stream analytics
 router.get("/:streamId/analytics", authMiddleware, async (req, res) => {
   try {
-    const liveStream = await LiveStream.findById(req.params.streamId);
+    const liveStream = await LiveStream.findById(req.params.streamId)
+      .populate("streamer", "username avatar")
+      .populate("streams.user", "username avatar");
     
     if (!liveStream) {
       return res.status(404).json({ msg: "Live stream not found" });
@@ -204,7 +208,8 @@ router.get("/:streamId/analytics", authMiddleware, async (req, res) => {
       heartsReceived: liveStream.heartsReceived,
       commentsCount: liveStream.comments.length,
       startedAt: liveStream.startedAt,
-      endedAt: liveStream.endedAt
+      endedAt: liveStream.endedAt,
+      streams: liveStream.streams
     });
   } catch (error) {
     console.error("Get analytics error:", error);
