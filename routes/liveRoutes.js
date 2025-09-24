@@ -160,37 +160,37 @@ router.post('/:streamId/end', authMiddleware, async (req, res) => {
 });
 
 // Get viewer token for LiveKit - FIXED
-router.get('/:streamId/token', async (req, res) => {
-  try {
-    const liveStream = await LiveStream.findById(req.params.streamId);
-    if (!liveStream) {
-      return res.status(404).json({ msg: 'Live stream not found' });
-    }
+// router.get('/:streamId/token', async (req, res) => {
+//   try {
+//     const liveStream = await LiveStream.findById(req.params.streamId);
+//     if (!liveStream) {
+//       return res.status(404).json({ msg: 'Live stream not found' });
+//     }
 
-    // Use the first stream's room for viewer token
-    const mainStream = liveStream.streams[0];
-    if (!mainStream) {
-      return res.status(404).json({ msg: 'No active stream found' });
-    }
+//     // Use the first stream's room for viewer token
+//     const mainStream = liveStream.streams[0];
+//     if (!mainStream) {
+//       return res.status(404).json({ msg: 'No active stream found' });
+//     }
 
-    // Generate viewer token with the room name (streamId-userId format)
-    const roomName = `${req.params.streamId}-${liveStream.streamer}`;
-    const viewerId = req.headers.authorization ? 
-      req.headers.authorization.replace('Bearer ', '') : 
-      `viewer-${Date.now()}`;
+//     // Generate viewer token with the room name (streamId-userId format)
+//     const roomName = `${req.params.streamId}-${liveStream.streamer}`;
+//     const viewerId = req.headers.authorization ? 
+//       req.headers.authorization.replace('Bearer ', '') : 
+//       `viewer-${Date.now()}`;
     
-    const viewerToken = generateViewerToken(roomName, viewerId);
+//     const viewerToken = generateViewerToken(roomName, viewerId);
     
-    res.json({
-      viewerToken,
-      roomUrl: process.env.LIVEKIT_URL,
-      roomName: roomName
-    });
-  } catch (error) {
-    console.error('Get viewer token error:', error);
-    res.status(500).json({ msg: 'Could not generate viewer token' });
-  }
-});
+//     res.json({
+//       viewerToken,
+//       roomUrl: process.env.LIVEKIT_URL,
+//       roomName: roomName
+//     });
+//   } catch (error) {
+//     console.error('Get viewer token error:', error);
+//     res.status(500).json({ msg: 'Could not generate viewer token' });
+//   }
+// });
 // Add this test route to your liveRoutes.js
 router.get('/test-credentials', async (req, res) => {
   try {
@@ -235,7 +235,38 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get a specific live stream - FIXED to include viewer token
+// In your liveRoutes.js, update the viewer token route
+router.get('/:streamId/token', async (req, res) => {
+  try {
+    const liveStream = await LiveStream.findById(req.params.streamId);
+    if (!liveStream) {
+      return res.status(404).json({ msg: 'Live stream not found' });
+    }
+
+    const mainStream = liveStream.streams[0];
+    if (!mainStream) {
+      return res.status(404).json({ msg: 'No active stream found' });
+    }
+
+    const roomName = `${req.params.streamId}-${liveStream.streamer}`;
+    const viewerId = req.headers.authorization ? 
+      req.headers.authorization.replace('Bearer ', '') : 
+      `viewer-${Date.now()}`;
+    
+    const viewerToken = await generateViewerToken(roomName, viewerId); // Add await here
+    
+    res.json({
+      viewerToken,
+      roomUrl: process.env.LIVEKIT_URL,
+      roomName: roomName
+    });
+  } catch (error) {
+    console.error('Get viewer token error:', error);
+    res.status(500).json({ msg: 'Could not generate viewer token' });
+  }
+});
+
+// Also update the specific stream route
 router.get('/:streamId', async (req, res) => {
   try {
     const liveStream = await LiveStream.findById(req.params.streamId)
@@ -246,14 +277,13 @@ router.get('/:streamId', async (req, res) => {
       return res.status(404).json({ msg: 'Live stream not found' });
     }
 
-    // Generate viewer token for this stream
     const roomName = `${req.params.streamId}-${liveStream.streamer._id}`;
     const viewerId = req.headers.authorization ? 
       req.headers.authorization.replace('Bearer ', '') : 
       `viewer-${Date.now()}`;
     
     try {
-      const viewerToken = generateViewerToken(roomName, viewerId);
+      const viewerToken = await generateViewerToken(roomName, viewerId); // Add await here
       liveStream._doc.viewerToken = viewerToken;
       liveStream._doc.roomUrl = process.env.LIVEKIT_URL;
     } catch (tokenError) {

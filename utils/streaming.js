@@ -1,8 +1,8 @@
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 
-const LIVEKIT_URL = "wss://theclipstream-q0jt88zr.livekit.cloud";
-const LIVEKIT_API_KEY = "APIQNh9qgZftA9E";
-const LIVEKIT_API_SECRET = "jMHFq7jtcmmuXVsdpuTZInYpSrX12vPvVsc9p9x2vML";
+const LIVEKIT_URL = process.env.LIVEKIT_URL;
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
 
 // Validate and clean URL
 const validateLiveKitURL = (url) => {
@@ -36,19 +36,35 @@ export const debugCredentials = () => {
 
 export const generateStreamDetails = async (streamId, userId) => {
   try {
+    console.log('Raw LIVEKIT_URL:', LIVEKIT_URL);
+    
     if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
       throw new Error('Missing LiveKit environment variables');
     }
 
-    const roomService = new RoomServiceClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+    // Validate URL
+    const validatedUrl = validateLiveKitURL(LIVEKIT_URL);
+    console.log('Validated LIVEKIT_URL:', validatedUrl);
+
+    const roomService = new RoomServiceClient(validatedUrl, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
     const roomName = `${streamId}-${userId}`;
+    console.log('Creating LiveKit room with name:', roomName);
 
-    const room = await roomService.createRoom({
-      name: roomName,
-      emptyTimeout: 300,
-      maxParticipants: 100,
-    });
+    // Create LiveKit room with timeout
+    const room = await Promise.race([
+      roomService.createRoom({
+        name: roomName,
+        emptyTimeout: 300,
+        maxParticipants: 100,
+      }),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Room creation timeout after 10 seconds')), 10000)
+      )
+    ]);
 
+    console.log('Room created successfully:', room.sid);
+
+    // Generate publisher token
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
       identity: userId,
     });
@@ -59,15 +75,35 @@ export const generateStreamDetails = async (streamId, userId) => {
       canSubscribe: true,
     });
     
-    const publishToken = at.toJwt();
+    const publishToken = await at.toJwt();
+    console.log('Generated publishToken successfully, type:', typeof publishToken, 'length:', publishToken?.length);
+
+    // Basic validation
+    if (!publishToken) {
+      throw new Error('JWT token generation returned null/undefined');
+    }
+    
+    if (typeof publishToken !== 'string') {
+      throw new Error(`JWT token is not a string, got: ${typeof publishToken}`);
+    }
 
     return {
-      roomUrl: LIVEKIT_URL,
+      roomUrl: validatedUrl,
       roomSid: room.sid,
       publishToken: publishToken,
     };
   } catch (error) {
-    console.error('LiveKit error:', error);
+    console.error('LiveKit stream creation error:', error);
+    
+    // Provide more specific error messages
+    if (error.code === 'ENOTFOUND') {
+      throw new Error(`Cannot connect to LiveKit server. Check your LIVEKIT_URL: ${LIVEKIT_URL}`);
+    } else if (error.message.includes('timeout')) {
+      throw new Error('LiveKit server connection timeout. Please try again.');
+    } else if (error.message.includes('Unauthorized')) {
+      throw new Error('Invalid LiveKit API credentials');
+    }
+    
     throw new Error(`Failed to create live stream: ${error.message}`);
   }
 };
@@ -83,7 +119,7 @@ export const endLiveInput = async (roomSid) => {
   }
 };
 
-export const generateViewerToken = (roomName, userId) => {
+export const generateViewerToken = async (roomName, userId) => {
   try {
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
       identity: userId || `viewer-${Date.now()}`,
@@ -94,7 +130,7 @@ export const generateViewerToken = (roomName, userId) => {
       canPublish: false,
       canSubscribe: true,
     });
-    const viewerToken = at.toJwt();
+    const viewerToken = await at.toJwt();
     console.log('Generated viewerToken successfully, length:', viewerToken.length);
     return viewerToken;
   } catch (error) {
@@ -104,7 +140,7 @@ export const generateViewerToken = (roomName, userId) => {
 };
 
 // Simple test to verify token generation works
-export const testTokenGeneration = () => {
+export const testTokenGeneration = async () => {
   try {
     console.log('Testing token generation...');
     
@@ -123,7 +159,7 @@ export const testTokenGeneration = () => {
       canSubscribe: true,
     });
     
-    const jwt = testToken.toJwt();
+    const jwt = await testToken.toJwt();
     console.log('Test token generated successfully:', !!jwt);
     console.log('Test token length:', jwt.length);
     return true;
