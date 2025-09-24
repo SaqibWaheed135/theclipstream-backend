@@ -39,41 +39,47 @@ router.post('/create', authMiddleware, async (req, res) => {
     // Save the stream first to get the ID
     await liveStream.save();
 
-    const mainStream = await generateStreamDetails(liveStream._id.toString(), req.userId);
-    console.log('Main stream details:', mainStream);
+    try {
+      const mainStream = await generateStreamDetails(liveStream._id.toString(), req.userId);
+      console.log('Main stream details:', mainStream);
 
-    // Ensure we have a valid token
-    if (!mainStream.publishToken || typeof mainStream.publishToken !== 'string') {
-      console.error('Invalid publishToken generated:', mainStream.publishToken);
+      // Validate the response from generateStreamDetails
+      if (!mainStream.publishToken || typeof mainStream.publishToken !== 'string') {
+        console.error('Invalid publishToken generated:', mainStream.publishToken);
+        await LiveStream.findByIdAndDelete(liveStream._id);
+        return res.status(500).json({ msg: 'Failed to generate stream token' });
+      }
+
+      liveStream.streams.push({
+        user: req.userId,
+        joinedAt: new Date(),
+        roomUrl: mainStream.roomUrl,
+        roomSid: mainStream.roomSid,
+      });
+
+      await liveStream.save();
+      await liveStream.populate('streamer', 'username avatar');
+      await liveStream.populate('streams.user', 'username avatar');
+
+      const responseData = {
+        streamId: liveStream._id,
+        publishToken: mainStream.publishToken,
+        roomUrl: mainStream.roomUrl,
+        stream: liveStream,
+      };
+
+      res.status(201).json(responseData);
+    } catch (streamError) {
+      console.error('Stream generation error:', streamError);
+      // Clean up the created stream if LiveKit setup fails
       await LiveStream.findByIdAndDelete(liveStream._id);
-      return res.status(500).json({ msg: 'Failed to generate stream token' });
+      res.status(500).json({ msg: `Could not create live stream: ${streamError.message}` });
     }
-
-    liveStream.streams.push({
-      user: req.userId,
-      joinedAt: new Date(),
-      roomUrl: mainStream.roomUrl,
-      roomSid: mainStream.roomSid,
-    });
-
-    await liveStream.save();
-    await liveStream.populate('streamer', 'username avatar');
-    await liveStream.populate('streams.user', 'username avatar');
-
-    const responseData = {
-      streamId: liveStream._id,
-      publishToken: mainStream.publishToken, // This should be a JWT string
-      roomUrl: mainStream.roomUrl,
-      stream: liveStream,
-    };
-    console.log('Create route response - publishToken type:', typeof responseData.publishToken);
-
-    res.status(201).json(responseData);
   } catch (error) {
     console.error('Create live stream error:', error);
     res.status(500).json({ msg: `Could not create live stream: ${error.message}` });
   }
-});
+});s
 
 // Add co-host
 router.post('/:streamId/add-cohost', authMiddleware, async (req, res) => {
