@@ -320,4 +320,25 @@ router.post('/:streamId/report', authMiddleware, async (req, res) => {
   }
 });
 
+// Add this test route to your liveRoutes.js
+router.get('/test-credentials', async (req, res) => {
+  try {
+    // Test token generation
+    const tokenTest = testTokenGeneration();
+    
+    // Test LiveKit connection
+    const connectionTest = await testLiveKitConnection();
+    
+    res.json({
+      tokenGeneration: tokenTest,
+      liveKitConnection: connectionTest,
+      message: 'Credential tests completed'
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message,
+      message: 'Credential test failed'
+    });
+  }
+});
 export default router;
