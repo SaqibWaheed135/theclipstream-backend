@@ -7,7 +7,7 @@ const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
 export const generateStreamDetails = async (streamId, userId) => {
   try {
     if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
-      throw new Error(`Missing LiveKit environment variables: URL=${LIVEKIT_URL}, API_KEY=${LIVEKIT_API_KEY}`);
+      throw new Error('Missing LiveKit environment variables');
     }
 
     const roomService = new RoomServiceClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
@@ -20,11 +20,10 @@ export const generateStreamDetails = async (streamId, userId) => {
       emptyTimeout: 300,
       maxParticipants: 100,
     });
-    console.log('Room created with SID:', room.sid);
 
     // Generate publisher token
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
-      identity: userId.toString(), // Ensure string identity
+      identity: userId,
     });
     at.addGrant({
       roomJoin: true,
@@ -33,9 +32,6 @@ export const generateStreamDetails = async (streamId, userId) => {
       canSubscribe: true,
     });
     const publishToken = at.toJwt();
-    if (!publishToken || typeof publishToken !== 'string') {
-      throw new Error('Failed to generate valid publishToken');
-    }
     console.log('Generated publishToken:', publishToken);
 
     return {
@@ -61,11 +57,8 @@ export const endLiveInput = async (roomSid) => {
 
 export const generateViewerToken = (roomName, userId) => {
   try {
-    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
-      throw new Error('Missing LiveKit API credentials');
-    }
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
-      identity: userId ? userId.toString() : `viewer-${Date.now()}`,
+      identity: userId || `viewer-${Date.now()}`,
     });
     at.addGrant({
       roomJoin: true,
