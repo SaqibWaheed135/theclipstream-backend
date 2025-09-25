@@ -863,7 +863,7 @@ router.get("/history", async (req, res) => {
       .skip(skip)
       .limit(limit);
 
-    const baseUrl = "https://theclipstream-backend.onrender.com";
+    const baseUrl = "https://theclipstream-backend.onrender.com" || "https://api.theclipstream.com";
 
     // 🔹 Add screenshot + balance
     const rechargesWithBalance = await Promise.all(

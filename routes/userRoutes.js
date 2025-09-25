@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 
 const router = express.Router();
-const BASE_URL = process.env.BASE_URL || 'https://theclipstream-backend.onrender.com';
+const BASE_URL = process.env.BASE_URL || 'https://theclipstream-backend.onrender.com' || 'https://api.theclipstream.com';
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(process.cwd(), 'uploads/avatars');
