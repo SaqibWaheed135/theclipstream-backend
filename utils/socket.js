@@ -19,7 +19,7 @@ const generateStreamDetails = (streamId, userId) => {
 const initializeSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: ["https://theclipstream.netlify.app", "http://localhost:5173" , "https://theclipstream.netlify.com"],
+      origin: ["https://theclipstream.netlify.app", "http://localhost:5173" , "https://theclipstream.com"],
       methods: ["GET", "POST"],
       credentials: true
     }
