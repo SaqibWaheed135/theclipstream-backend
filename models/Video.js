@@ -4,7 +4,10 @@ const VideoSchema = new mongoose.Schema(
   {
     title: { type: String, default: "" },
     description: { type: String, default: "" },
-    key: { type: String, required: true }, // Wasabi key
+    key: { type: String, required: true }, // Wasabi raw MP4 key
+
+    // 🔹 HLS playlist (after FFmpeg worker processes video)
+    hlsUrl: { type: String, default: "" },  // 👈 NEW FIELD
 
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
@@ -42,7 +45,7 @@ const VideoSchema = new mongoose.Schema(
     isFeatured: { type: Boolean, default: false },
 
     // 🔹 Approval field
-    isApproved: { type: Boolean, default: false },  // 👈 NEW FIELD
+    isApproved: { type: Boolean, default: false },  // ✅
 
     // Location
     location: { type: String, default: "" }
@@ -56,17 +59,16 @@ const VideoSchema = new mongoose.Schema(
       { likes: 1 },
       { views: -1 },
       { isFeatured: 1, createdAt: -1 },
-      { isApproved: 1, createdAt: -1 } // 👈 index for admin filters
+      { isApproved: 1, createdAt: -1 }
     ]
   }
 );
 
-// Virtual for likes count
+// Virtuals
 VideoSchema.virtual("likesCount").get(function() {
   return this.likes ? this.likes.length : 0;
 });
 
-// Virtual for engagement rate
 VideoSchema.virtual("engagementRate").get(function() {
   if (this.views === 0) return 0;
   return (((this.likesCount + this.commentsCount) / this.views) * 100).toFixed(2);
@@ -84,14 +86,14 @@ VideoSchema.methods.incrementShares = function() {
 
 // Static queries
 VideoSchema.statics.getTrending = function(limit = 10) {
-  return this.find({ privacy: "public", isApproved: true }) // ✅ only approved videos
+  return this.find({ privacy: "public", isApproved: true })
     .sort({ views: -1, likes: -1, createdAt: -1 })
     .limit(limit)
     .populate("user", "username avatar");
 };
 
 VideoSchema.statics.getByHashtag = function(hashtag, limit = 20) {
-  return this.find({ hashtags: hashtag, privacy: "public", isApproved: true }) // ✅ only approved
+  return this.find({ hashtags: hashtag, privacy: "public", isApproved: true })
     .sort({ createdAt: -1 })
     .limit(limit)
     .populate("user", "username avatar");
