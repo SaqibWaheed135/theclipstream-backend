@@ -5,6 +5,7 @@ import Comment from "../models/Comment.js"; // You'll need to create this model
 import User from "../models/User.js"; // Assuming you have a User model
 import authMiddleware from "../middleware/auth.js";
 import jwt from 'jsonwebtoken';
+import transcodeToHLS from "../jobs/transcodeWorker.js";
 
 
 const router = express.Router();
@@ -34,6 +35,30 @@ router.post("/signed-url", authMiddleware, async (req, res) => {
 });
 
 // 2. Save Video Metadata
+// router.post("/save", authMiddleware, async (req, res) => {
+//   try {
+//     const { description, hashtags, privacy, allowComments, allowDuet, key } = req.body;
+
+//     if (!key) return res.status(400).json({ msg: "key is required" });
+
+//     const video = await Video.create({
+//       description,
+//       key, // store only S3 object key instead of public URL
+//       user: req.userId,
+//       hashtags: hashtags?.split(" ").filter((tag) => tag.trim().startsWith("#")) || [],
+//       privacy: privacy || "public",
+//       allowComments: allowComments ?? true,
+//       allowDuet: allowDuet ?? true,
+//     });
+
+//     res.status(201).json({ video });
+//   } catch (err) {
+//     console.error("Save video error:", err);
+//     res.status(500).json({ msg: "Could not save video" });
+//   }
+// });
+
+
 router.post("/save", authMiddleware, async (req, res) => {
   try {
     const { description, hashtags, privacy, allowComments, allowDuet, key } = req.body;
@@ -42,20 +67,27 @@ router.post("/save", authMiddleware, async (req, res) => {
 
     const video = await Video.create({
       description,
-      key, // store only S3 object key instead of public URL
+      key,
       user: req.userId,
-      hashtags: hashtags?.split(" ").filter((tag) => tag.trim().startsWith("#")) || [],
+      hashtags: hashtags?.split(" ").filter(tag => tag.startsWith("#")) || [],
       privacy: privacy || "public",
       allowComments: allowComments ?? true,
       allowDuet: allowDuet ?? true,
     });
 
-    res.status(201).json({ video });
+    // 🔥 Transcode in background
+    transcodeToHLS(video._id, key).catch(console.error);
+
+    res.status(201).json({
+      video,
+      msg: "Upload successful! Video is being processed into HLS..."
+    });
   } catch (err) {
     console.error("Save video error:", err);
     res.status(500).json({ msg: "Could not save video" });
   }
 });
+
 
 // 3. Get Signed GET URL for Viewing
 router.get("/stream/:id", authMiddleware, async (req, res) => {
