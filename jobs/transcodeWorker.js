@@ -5,12 +5,13 @@ import Video from "../models/Video.js";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+// ✅ Always use the bundled Windows ffmpeg binary
+const ffmpegPath = ffmpegInstaller.path.replace("app.asar", "app.asar.unpacked");
+ffmpeg.setFfmpegPath(ffmpegPath);
 
-const TMP_DIR = "C:\\temp"; // Windows temp dir
+console.log("🎯 Forcing FFmpeg binary:", ffmpegPath);
 
-// Helper: normalize paths to forward slashes for FFmpeg
-const toSafePath = (p) => p.replace(/\\/g, "/");
+const TMP_DIR = "C:\\temp"; // Windows-safe temp dir
 
 async function transcodeToHLS(videoId, key) {
   try {
@@ -22,7 +23,7 @@ async function transcodeToHLS(videoId, key) {
     const video = await Video.findById(videoId);
     if (!video) throw new Error("Video not found");
 
-    // 1. Download MP4
+    // 1. Download MP4 from Wasabi
     const localFile = path.join(TMP_DIR, `${Date.now()}_input.mp4`);
     console.log("📡 Downloading from Wasabi:", key);
 
@@ -41,26 +42,22 @@ async function transcodeToHLS(videoId, key) {
     // 2. Transcode → HLS
     const outputDir = path.join(TMP_DIR, `${Date.now()}_hls`);
     fs.mkdirSync(outputDir, { recursive: true });
-
     const outputFile = path.join(outputDir, "index.m3u8");
-
-    // Normalize for FFmpeg
-    const safeInput = toSafePath(localFile);
-    const safeOutput = toSafePath(outputFile);
 
     console.log("🎬 Starting FFmpeg transcoding...");
 
     await new Promise((resolve, reject) => {
-      ffmpeg(safeInput)
+      ffmpeg(localFile)
+        .setFfmpegPath(ffmpegPath) // ✅ Force again just in case
         .outputOptions([
           "-profile:v baseline",
           "-level 3.0",
           "-start_number 0",
           "-hls_time 6",
           "-hls_list_size 0",
-          "-f hls"
+          "-f hls",
         ])
-        .output(safeOutput)
+        .output(outputFile)
         .on("start", (cmd) => console.log("▶️ FFmpeg command:", cmd))
         .on("stderr", (line) => console.log("⚠️", line))
         .on("end", () => {
@@ -68,7 +65,7 @@ async function transcodeToHLS(videoId, key) {
           resolve();
         })
         .on("error", (err) => {
-          console.error("❌ FFmpeg error:", err.message);
+          console.error("❌ FFmpeg error:", err);
           reject(err);
         })
         .run();
