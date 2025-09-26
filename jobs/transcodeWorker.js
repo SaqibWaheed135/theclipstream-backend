@@ -16,13 +16,32 @@ async function transcodeToHLS(videoId, key) {
     // 1. Download MP4 from Wasabi → local temp
     const localFile = path.join(TMP_DIR, `${Date.now()}_input.mp4`);
     const fileStream = fs.createWriteStream(localFile);
-    await new Promise((resolve, reject) => {
-      s3.getObject({ Bucket: process.env.WASABI_BUCKET, Key: key })
-        .createReadStream()
-        .pipe(fileStream)
-        .on("finish", resolve)
-        .on("error", reject);
-    });
+  await new Promise((resolve, reject) => {
+  console.log("📡 Downloading from Wasabi:", key);
+
+  const s3Stream = s3.getObject({
+    Bucket: process.env.WASABI_BUCKET,
+    Key: key
+  }).createReadStream();
+
+  s3Stream.on("error", (err) => {
+    console.error("❌ S3 stream error:", err);
+    reject(err);
+  });
+
+  fileStream.on("error", (err) => {
+    console.error("❌ File write error:", err);
+    reject(err);
+  });
+
+  fileStream.on("finish", () => {
+    console.log("✅ File downloaded to:", localFile);
+    resolve();
+  });
+
+  s3Stream.pipe(fileStream);
+});
+
 
     // 2. Transcode → HLS
     const outputDir = path.join(TMP_DIR, `${Date.now()}_hls`);
@@ -66,6 +85,10 @@ async function transcodeToHLS(videoId, key) {
   } catch (err) {
     console.error("❌ Transcode error:", err);
   }
+  // Ensure TMP_DIR exists
+if (!fs.existsSync(TMP_DIR)) {
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+}
 }
 
 export default transcodeToHLS;

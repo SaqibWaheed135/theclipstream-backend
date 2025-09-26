@@ -9,7 +9,7 @@ if (!process.env.WASABI_KEY || !process.env.WASABI_SECRET) {
 const s3 = new AWS.S3({
   accessKeyId: process.env.WASABI_KEY,
   secretAccessKey: process.env.WASABI_SECRET,
-  endpoint: process.env.WASABI_ENDPOINT,
+  endpoint: new AWS.Endpoint(process.env.WASABI_ENDPOINT), // ✅ FIXED
   region: process.env.WASABI_REGION,
   signatureVersion: "v4",
 });
