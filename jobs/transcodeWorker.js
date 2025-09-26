@@ -7,7 +7,10 @@ import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-const TMP_DIR = "C:\\temp"; // ✅ Windows safe
+const TMP_DIR = "C:\\temp"; // Windows temp dir
+
+// Helper: normalize paths to forward slashes for FFmpeg
+const toSafePath = (p) => p.replace(/\\/g, "/");
 
 async function transcodeToHLS(videoId, key) {
   try {
@@ -41,10 +44,14 @@ async function transcodeToHLS(videoId, key) {
 
     const outputFile = path.join(outputDir, "index.m3u8");
 
+    // Normalize for FFmpeg
+    const safeInput = toSafePath(localFile);
+    const safeOutput = toSafePath(outputFile);
+
     console.log("🎬 Starting FFmpeg transcoding...");
 
     await new Promise((resolve, reject) => {
-      ffmpeg(localFile)
+      ffmpeg(safeInput)
         .outputOptions([
           "-profile:v baseline",
           "-level 3.0",
@@ -53,15 +60,15 @@ async function transcodeToHLS(videoId, key) {
           "-hls_list_size 0",
           "-f hls"
         ])
-        .output(outputFile)
-        .on("start", cmd => console.log("▶️ FFmpeg command:", cmd))
-        .on("stderr", line => console.log("⚠️", line))
+        .output(safeOutput)
+        .on("start", (cmd) => console.log("▶️ FFmpeg command:", cmd))
+        .on("stderr", (line) => console.log("⚠️", line))
         .on("end", () => {
           console.log("✅ FFmpeg finished transcoding");
           resolve();
         })
-        .on("error", err => {
-          console.error("❌ FFmpeg error:", err);
+        .on("error", (err) => {
+          console.error("❌ FFmpeg error:", err.message);
           reject(err);
         })
         .run();
