@@ -1,12 +1,13 @@
 import fs from "fs";
 import path from "path";
-import { exec } from "child_process";
-import util from "util";
 import s3 from "../utils/s3.js";
 import Video from "../models/Video.js";
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 
-const execPromise = util.promisify(exec);
-const TMP_DIR = "C:\\temp"; // ✅ Windows safe temp dir
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
+const TMP_DIR = "C:\\temp"; // ✅ Windows safe
 
 async function transcodeToHLS(videoId, key) {
   try {
@@ -38,33 +39,36 @@ async function transcodeToHLS(videoId, key) {
     const outputDir = path.join(TMP_DIR, `${Date.now()}_hls`);
     fs.mkdirSync(outputDir, { recursive: true });
 
-    // Normalize paths for ffmpeg (forward slashes)
-    const safeLocalFile = localFile.replace(/\\/g, "/");
-    const safeOutputDir = outputDir.replace(/\\/g, "/");
+    const outputFile = path.join(outputDir, "index.m3u8");
 
-    const command = `
-      ffmpeg -y -i "${safeLocalFile}" -profile:v baseline -level 3.0 -start_number 0 \
-      -hls_time 6 -hls_list_size 0 -f hls "${safeOutputDir}/index.m3u8"
-    `;
+    console.log("🎬 Starting FFmpeg transcoding...");
 
-    console.log("🎬 Running FFmpeg command:\n", command);
+    await new Promise((resolve, reject) => {
+      ffmpeg(localFile)
+        .outputOptions([
+          "-profile:v baseline",
+          "-level 3.0",
+          "-start_number 0",
+          "-hls_time 6",
+          "-hls_list_size 0",
+          "-f hls"
+        ])
+        .output(outputFile)
+        .on("start", cmd => console.log("▶️ FFmpeg command:", cmd))
+        .on("stderr", line => console.log("⚠️", line))
+        .on("end", () => {
+          console.log("✅ FFmpeg finished transcoding");
+          resolve();
+        })
+        .on("error", err => {
+          console.error("❌ FFmpeg error:", err);
+          reject(err);
+        })
+        .run();
+    });
 
-    try {
-      const { stdout, stderr } = await execPromise(command);
-      if (stdout) console.log("📤 FFmpeg stdout:", stdout);
-      if (stderr) console.log("⚠️ FFmpeg stderr:", stderr);
-    } catch (ffmpegErr) {
-      console.error("❌ FFmpeg failed!");
-      console.error("📤 stdout:", ffmpegErr.stdout || "");
-      console.error("⚠️ stderr:", ffmpegErr.stderr || "");
-      throw ffmpegErr; // rethrow so it's caught below
-    }
-
-    // 3. Debug: list output files
+    // 3. Upload HLS files
     const files = fs.readdirSync(outputDir);
-    console.log("📂 Generated HLS files:", files);
-
-    // 4. Upload HLS files to Wasabi
     for (const file of files) {
       const filePath = path.join(outputDir, file);
       const fileKey = `hls/${videoId}/${file}`;
@@ -82,7 +86,7 @@ async function transcodeToHLS(videoId, key) {
         .promise();
     }
 
-    // 5. Save HLS URL in DB
+    // 4. Save HLS URL in DB
     const hlsUrl = `https://${process.env.WASABI_BUCKET}.${process.env.WASABI_ENDPOINT}/hls/${videoId}/index.m3u8`;
     video.hlsUrl = hlsUrl;
     await video.save();
