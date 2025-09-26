@@ -6,7 +6,11 @@ import s3 from "../utils/s3.js";
 import Video from "../models/Video.js";
 
 const execPromise = util.promisify(exec);
-const TMP_DIR = "C:/temp"; // ✅ Windows-friendly temp folder
+const TMP_DIR = "C:\temp"; // ✅ Windows-friendly temp folder
+// Ensure TMP_DIR exists
+if (!fs.existsSync(TMP_DIR)) {
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+}
 
 async function transcodeToHLS(videoId, key) {
   try {
@@ -85,10 +89,7 @@ async function transcodeToHLS(videoId, key) {
   } catch (err) {
     console.error("❌ Transcode error:", err);
   }
-  // Ensure TMP_DIR exists
-if (!fs.existsSync(TMP_DIR)) {
-  fs.mkdirSync(TMP_DIR, { recursive: true });
-}
+ 
 }
 
 export default transcodeToHLS;
