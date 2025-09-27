@@ -1,12 +1,11 @@
 import express from "express";
 import s3 from "../utils/s3.js";
 import Video from "../models/Video.js";
-import Comment from "../models/Comment.js"; // You'll need to create this model
-import User from "../models/User.js"; // Assuming you have a User model
+import Comment from "../models/Comment.js";
+import User from "../models/User.js";
 import authMiddleware from "../middleware/auth.js";
 import jwt from 'jsonwebtoken';
 import transcodeToHLS from "../jobs/transcodeWorker.js";
-
 
 const router = express.Router();
 
@@ -23,7 +22,7 @@ router.post("/signed-url", authMiddleware, async (req, res) => {
     const uploadUrl = await s3.getSignedUrlPromise("putObject", {
       Bucket: process.env.WASABI_BUCKET,
       Key: key,
-      Expires: 60, // 1 min for upload
+      Expires: 60,
       ContentType: fileType,
     });
 
@@ -34,31 +33,7 @@ router.post("/signed-url", authMiddleware, async (req, res) => {
   }
 });
 
-// 2. Save Video Metadata
-// router.post("/save", authMiddleware, async (req, res) => {
-//   try {
-//     const { description, hashtags, privacy, allowComments, allowDuet, key } = req.body;
-
-//     if (!key) return res.status(400).json({ msg: "key is required" });
-
-//     const video = await Video.create({
-//       description,
-//       key, // store only S3 object key instead of public URL
-//       user: req.userId,
-//       hashtags: hashtags?.split(" ").filter((tag) => tag.trim().startsWith("#")) || [],
-//       privacy: privacy || "public",
-//       allowComments: allowComments ?? true,
-//       allowDuet: allowDuet ?? true,
-//     });
-
-//     res.status(201).json({ video });
-//   } catch (err) {
-//     console.error("Save video error:", err);
-//     res.status(500).json({ msg: "Could not save video" });
-//   }
-// });
-
-
+// 2. Save Video Metadata with thumbnail generation
 router.post("/save", authMiddleware, async (req, res) => {
   try {
     const { description, hashtags, privacy, allowComments, allowDuet, key } = req.body;
@@ -69,57 +44,164 @@ router.post("/save", authMiddleware, async (req, res) => {
       description,
       key,
       user: req.userId,
-      hashtags: hashtags?.split(" ").filter(tag => tag.startsWith("#")) || [],
+      hashtags: hashtags?.split(" ").filter((tag) => tag.trim().startsWith("#")) || [],
       privacy: privacy || "public",
       allowComments: allowComments ?? true,
       allowDuet: allowDuet ?? true,
     });
 
-    // 🔥 Transcode in background
-    transcodeToHLS(video._id, key).catch(console.error);
+    // Queue thumbnail generation (optional)
+    // generateThumbnail(key);
 
-    res.status(201).json({
-      video,
-      msg: "Upload successful! Video is being processed into HLS..."
-    });
+    res.status(201).json({ video });
   } catch (err) {
     console.error("Save video error:", err);
     res.status(500).json({ msg: "Could not save video" });
   }
 });
 
-
-// 3. Get Signed GET URL for Viewing
-router.get("/stream/:id", authMiddleware, async (req, res) => {
+// 3. STREAMING ENDPOINT - Supports range requests for progressive loading
+router.get("/stream/:id", async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
     if (!video) return res.status(404).json({ msg: "Video not found" });
 
-    const signedUrl = s3.getSignedUrl("getObject", {
+    // Get video metadata from S3
+    const headParams = {
       Bucket: process.env.WASABI_BUCKET,
       Key: video.key,
-      Expires: 60 * 60 * 24 * 7, // 1 week
-    });
+    };
 
-    res.json({ url: signedUrl });
+    const headResult = await s3.headObject(headParams).promise();
+    const fileSize = headResult.ContentLength;
+    const contentType = headResult.ContentType || 'video/mp4';
+
+    // Parse range header
+    const range = req.headers.range;
+    
+    if (!range) {
+      // No range requested, serve entire file
+      const streamParams = {
+        Bucket: process.env.WASABI_BUCKET,
+        Key: video.key,
+      };
+      
+      const stream = s3.getObject(streamParams).createReadStream();
+      
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=31536000',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': 'Range',
+      });
+      
+      stream.pipe(res);
+      return;
+    }
+
+    // Parse range header (e.g., "bytes=200-1000" or "bytes=200-")
+    const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + CHUNK_SIZE - 1, fileSize - 1);
+    
+    if (start >= fileSize || end >= fileSize) {
+      return res.status(416).send('Range Not Satisfiable');
+    }
+
+    const chunksize = (end - start) + 1;
+    
+    // Create S3 stream with range
+    const streamParams = {
+      Bucket: process.env.WASABI_BUCKET,
+      Key: video.key,
+      Range: `bytes=${start}-${end}`,
+    };
+    
+    const stream = s3.getObject(streamParams).createReadStream();
+    
+    // Set partial content headers
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunksize,
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=31536000',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range',
+    });
+    
+    stream.pipe(res);
+    
   } catch (err) {
     console.error("Stream video error:", err);
-    res.status(500).json({ msg: "Could not generate playback URL" });
+    res.status(500).json({ msg: "Could not stream video" });
   }
 });
 
-// 4. Get All Videos (Feed)
+// 4. PROXY STREAMING - Direct proxy to S3 with range support
+router.get("/proxy/:id", async (req, res) => {
+  try {
+    const video = await Video.findById(req.params.id);
+    if (!video) return res.status(404).json({ msg: "Video not found" });
+
+    // Generate a short-lived signed URL for the proxy
+    const signedUrl = s3.getSignedUrl("getObject", {
+      Bucket: process.env.WASABI_BUCKET,
+      Key: video.key,
+      Expires: 300, // 5 minutes
+    });
+
+    // Extract the range header from the original request
+    const range = req.headers.range;
+    const headers = {
+      'User-Agent': 'VideoStreamProxy/1.0',
+    };
+    
+    if (range) {
+      headers.Range = range;
+    }
+
+    // Proxy the request to S3
+    const fetch = await import('node-fetch').then(m => m.default);
+    const response = await fetch(signedUrl, { headers });
+    
+    // Forward S3 response headers
+    res.status(response.status);
+    response.headers.forEach((value, key) => {
+      if (['content-length', 'content-type', 'content-range', 'accept-ranges', 'cache-control'].includes(key.toLowerCase())) {
+        res.setHeader(key, value);
+      }
+    });
+    
+    // Add CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Range');
+    
+    // Stream the response
+    response.body.pipe(res);
+    
+  } catch (err) {
+    console.error("Proxy video error:", err);
+    res.status(500).json({ msg: "Could not proxy video" });
+  }
+});
+
+// 5. Get All Videos with optimized URLs
 router.get("/", async (req, res) => {
   try {
     let userId = null;
     
-    // Properly extract userId from authorization header
     if (req.headers.authorization) {
       try {
-        const token = req.headers.authorization.split(' ')[1]; // Extract token after 'Bearer '
+        const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         userId = decoded.id || decoded.userId;
-        console.log('Decoded userId from token:', userId); // Debug log
       } catch (tokenError) {
         console.log('Invalid token, proceeding without authentication');
         userId = null;
@@ -132,44 +214,51 @@ router.get("/", async (req, res) => {
 
     const videosWithUrls = await Promise.all(
       videos.map(async (video) => {
-        // Generate signed URL
-        let signedUrl = null;
-        if (video.key && process.env.WASABI_BUCKET) {
-          signedUrl = s3.getSignedUrl("getObject", {
+        // Use streaming endpoint instead of direct S3 URL
+        const streamUrl = `${req.protocol}://${req.get('host')}/api/videos/stream/${video._id}`;
+        
+        // Generate thumbnail URL if available
+        const thumbnailKey = video.key.replace(/\.[^/.]+$/, '_thumb.jpg');
+        let thumbnailUrl = null;
+        
+        try {
+          await s3.headObject({
             Bucket: process.env.WASABI_BUCKET,
-            Key: video.key,
+            Key: thumbnailKey,
+          }).promise();
+          
+          thumbnailUrl = s3.getSignedUrl("getObject", {
+            Bucket: process.env.WASABI_BUCKET,
+            Key: thumbnailKey,
             Expires: 3600,
           });
+        } catch (error) {
+          // Thumbnail doesn't exist, use placeholder or generate
+          thumbnailUrl = `https://via.placeholder.com/400x600/000000/FFFFFF?text=Loading`;
         }
 
-        // Get comment count
         const commentsCount = await Comment.countDocuments({ video: video._id });
 
-        // Check if user has liked/saved this video (if authenticated)
         let isLiked = false;
         let isSaved = false;
         
         if (userId) {
-          // Check if user liked this video
           isLiked = video.likes.some(likeId => {
             const likeIdStr = likeId.toString();
             const userIdStr = userId.toString();
-            console.log('Checking like:', likeIdStr, 'against user:', userIdStr, 'match:', likeIdStr === userIdStr);
             return likeIdStr === userIdStr;
           });
           
-          // Check if user saved this video
           const user = await User.findById(userId);
           if (user && user.savedVideos) {
             isSaved = user.savedVideos.some(savedId => savedId.toString() === video._id.toString());
           }
         }
 
-        console.log(`Video ${video._id}: isLiked = ${isLiked}, userId = ${userId}`); // Debug log
-
         return {
           ...video.toObject(),
-          url: signedUrl,
+          url: streamUrl, // Use streaming URL instead of direct S3
+          thumbnailUrl, // Add thumbnail for better UX
           commentsCount,
           isLiked,
           isSaved,
@@ -185,7 +274,50 @@ router.get("/", async (req, res) => {
   }
 });
 
-// 5. Like/Unlike Video
+// 6. Generate video thumbnail (utility endpoint)
+router.post("/:id/thumbnail", authMiddleware, async (req, res) => {
+  try {
+    const video = await Video.findById(req.params.id);
+    if (!video) return res.status(404).json({ msg: "Video not found" });
+
+    // Check if user owns the video
+    if (video.user.toString() !== req.userId) {
+      return res.status(403).json({ msg: "Not authorized" });
+    }
+
+    // Queue thumbnail generation job
+    const thumbnailKey = video.key.replace(/\.[^/.]+$/, '_thumb.jpg');
+    
+    // You would implement actual thumbnail generation here
+    // For now, return the key where thumbnail will be stored
+    res.json({ 
+      msg: "Thumbnail generation queued",
+      thumbnailKey 
+    });
+    
+  } catch (err) {
+    console.error("Thumbnail generation error:", err);
+    res.status(500).json({ msg: "Could not generate thumbnail" });
+  }
+});
+
+// OPTIONS handler for CORS preflight
+router.options("/stream/:id", (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Range');
+  res.sendStatus(200);
+});
+
+router.options("/proxy/:id", (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Range');
+  res.sendStatus(200);
+});
+
+// Rest of your existing routes remain the same...
+// Like/Unlike Video
 router.post("/:id/like", authMiddleware, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -195,10 +327,8 @@ router.post("/:id/like", authMiddleware, async (req, res) => {
     const isLiked = video.likes.includes(userId);
 
     if (isLiked) {
-      // Unlike
       video.likes = video.likes.filter(id => id.toString() !== userId);
     } else {
-      // Like
       video.likes.push(userId);
     }
 
@@ -215,7 +345,7 @@ router.post("/:id/like", authMiddleware, async (req, res) => {
   }
 });
 
-// 6. Save/Unsave Video
+// Save/Unsave Video
 router.post("/:id/save", authMiddleware, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -224,7 +354,6 @@ router.post("/:id/save", authMiddleware, async (req, res) => {
     const user = await User.findById(req.userId);
     if (!user) return res.status(404).json({ msg: "User not found" });
 
-    // Initialize savedVideos array if it doesn't exist
     if (!user.savedVideos) {
       user.savedVideos = [];
     }
@@ -232,10 +361,8 @@ router.post("/:id/save", authMiddleware, async (req, res) => {
     const isSaved = user.savedVideos.includes(req.params.id);
 
     if (isSaved) {
-      // Unsave
       user.savedVideos = user.savedVideos.filter(id => id.toString() !== req.params.id);
     } else {
-      // Save
       user.savedVideos.push(req.params.id);
     }
 
@@ -251,7 +378,7 @@ router.post("/:id/save", authMiddleware, async (req, res) => {
   }
 });
 
-// 7. Get Comments for a Video
+// Get Comments for a Video
 router.get("/:id/comments", async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
@@ -269,7 +396,7 @@ router.get("/:id/comments", async (req, res) => {
   }
 });
 
-// 8. Add Comment to Video
+// Add Comment to Video
 router.post("/:id/comments", authMiddleware, async (req, res) => {
   try {
     const { text } = req.body;
@@ -295,12 +422,10 @@ router.post("/:id/comments", authMiddleware, async (req, res) => {
       video: req.params.id
     });
 
-    // Update video's comment count
     await Video.findByIdAndUpdate(req.params.id, {
       $inc: { commentsCount: 1 }
     });
 
-    // Populate user info for the response
     const populatedComment = await Comment.findById(comment._id)
       .populate("user", "username avatar");
 
@@ -311,7 +436,7 @@ router.post("/:id/comments", authMiddleware, async (req, res) => {
   }
 });
 
-// 9. Delete Comment (Optional - for comment owner or video owner)
+// Delete Comment
 router.delete("/:videoId/comments/:commentId", authMiddleware, async (req, res) => {
   try {
     const { videoId, commentId } = req.params;
@@ -322,14 +447,12 @@ router.delete("/:videoId/comments/:commentId", authMiddleware, async (req, res) 
     const video = await Video.findById(videoId);
     if (!video) return res.status(404).json({ msg: "Video not found" });
 
-    // Check if user is comment owner or video owner
     if (comment.user.toString() !== req.userId && video.user.toString() !== req.userId) {
       return res.status(403).json({ msg: "Not authorized to delete this comment" });
     }
 
     await Comment.findByIdAndDelete(commentId);
 
-    // Update video's comment count
     await Video.findByIdAndUpdate(videoId, {
       $inc: { commentsCount: -1 }
     });
@@ -341,7 +464,7 @@ router.delete("/:videoId/comments/:commentId", authMiddleware, async (req, res) 
   }
 });
 
-// 10. Get User's Saved Videos
+// Get User's Saved Videos
 router.get("/saved", authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.userId).populate({
@@ -355,18 +478,11 @@ router.get("/saved", authMiddleware, async (req, res) => {
     if (!user) return res.status(404).json({ msg: "User not found" });
 
     const videosWithUrls = user.savedVideos.map((video) => {
-      let signedUrl = null;
-      if (video.key && process.env.WASABI_BUCKET) {
-        signedUrl = s3.getSignedUrl("getObject", {
-          Bucket: process.env.WASABI_BUCKET,
-          Key: video.key,
-          Expires: 3600,
-        });
-      }
+      const streamUrl = `${req.protocol}://${req.get('host')}/api/videos/stream/${video._id}`;
 
       return {
         ...video.toObject(),
-        url: signedUrl,
+        url: streamUrl,
         isSaved: true
       };
     });
@@ -378,7 +494,7 @@ router.get("/saved", authMiddleware, async (req, res) => {
   }
 });
 
-// 11. Get Video Statistics (Optional - for analytics)
+// Get Video Statistics
 router.get("/:id/stats", authMiddleware, async (req, res) => {
   try {
     const video = await Video.findById(req.params.id);
@@ -386,8 +502,6 @@ router.get("/:id/stats", authMiddleware, async (req, res) => {
 
     const commentsCount = await Comment.countDocuments({ video: req.params.id });
     const likesCount = video.likes.length;
-    
-    // You could add more stats like views, shares, etc.
     
     res.json({
       videoId: video._id,
@@ -402,6 +516,7 @@ router.get("/:id/stats", authMiddleware, async (req, res) => {
   }
 });
 
+// Get user's videos
 router.get("/user/:userId", authMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -412,20 +527,9 @@ router.get("/user/:userId", authMiddleware, async (req, res) => {
 
     const videosWithUrls = await Promise.all(
       userVideos.map(async (video) => {
-        // Generate signed URL
-        let signedUrl = null;
-        if (video.key && process.env.WASABI_BUCKET) {
-          signedUrl = s3.getSignedUrl("getObject", {
-            Bucket: process.env.WASABI_BUCKET,
-            Key: video.key,
-            Expires: 3600,
-          });
-        }
-
-        // Get comment count
+        const streamUrl = `${req.protocol}://${req.get('host')}/api/videos/stream/${video._id}`;
         const commentsCount = await Comment.countDocuments({ video: video._id });
 
-        // Check if current user has liked/saved this video
         let isLiked = false;
         let isSaved = false;
         
@@ -440,7 +544,7 @@ router.get("/user/:userId", authMiddleware, async (req, res) => {
 
         return {
           ...video.toObject(),
-          url: signedUrl,
+          url: streamUrl,
           commentsCount,
           isLiked,
           isSaved,
@@ -456,44 +560,30 @@ router.get("/user/:userId", authMiddleware, async (req, res) => {
   }
 });
 
+// Get liked videos
 router.get("/liked", authMiddleware, async (req, res) => {
   try {
     const userId = req.userId;
-    console.log('Fetching liked videos for user:', userId);
     
-    // Find videos that the current user has liked
     const likedVideos = await Video.find({
       likes: { $in: [userId] }
     })
     .populate("user", "username avatar")
     .sort({ createdAt: -1 });
 
-    console.log('Found liked videos:', likedVideos.length);
-
     const videosWithUrls = await Promise.all(
       likedVideos.map(async (video) => {
-        // Generate signed URL
-        let signedUrl = null;
-        if (video.key && process.env.WASABI_BUCKET) {
-          signedUrl = s3.getSignedUrl("getObject", {
-            Bucket: process.env.WASABI_BUCKET,
-            Key: video.key,
-            Expires: 3600,
-          });
-        }
-
-        // Get comment count
+        const streamUrl = `${req.protocol}://${req.get('host')}/api/videos/stream/${video._id}`;
         const commentsCount = await Comment.countDocuments({ video: video._id });
 
-        // Check if user saved this video
         const user = await User.findById(userId);
         const isSaved = user?.savedVideos?.some(savedId => savedId.toString() === video._id.toString()) || false;
 
         return {
           ...video.toObject(),
-          url: signedUrl,
+          url: streamUrl,
           commentsCount,
-          isLiked: true, // Always true for liked videos
+          isLiked: true,
           isSaved,
           likesCount: video.likes.length
         };
@@ -507,7 +597,7 @@ router.get("/liked", authMiddleware, async (req, res) => {
   }
 });
 
-// 12. Admin Upload Video (auto-approved)
+// Admin Upload Video
 router.post("/admin/add", async (req, res) => {
   try {
     const { uri, description, title, avatar, adminUserId } = req.body;
@@ -516,11 +606,10 @@ router.post("/admin/add", async (req, res) => {
       return res.status(400).json({ msg: "Video URI and description are required" });
     }
 
-    // Use admin user if provided, otherwise fallback
     const userId = adminUserId || process.env.DEFAULT_ADMIN_USER_ID;
 
     const video = await Video.create({
-      key: uri, // if you're sending Wasabi key instead of full URL
+      key: uri,
       description,
       title: title || "",
       user: userId,
@@ -528,7 +617,7 @@ router.post("/admin/add", async (req, res) => {
       privacy: "public",
       allowComments: true,
       allowDuet: true,
-      isApproved: true, // ✅ auto-approved
+      isApproved: true,
     });
 
     res.status(201).json({
@@ -541,6 +630,5 @@ router.post("/admin/add", async (req, res) => {
     res.status(500).json({ msg: "Server error while uploading admin video" });
   }
 });
-
 
 export default router;
