@@ -4,6 +4,7 @@ import LiveStream from '../models/LiveStream.js';
 import User from '../models/User.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
+import Group from '../models/Group.js';
 
 let io;
 
@@ -584,7 +585,6 @@ const initializeSocket = (server) => {
           return;
         }
 
-        const Group = require('../models/Group').default;
         const group = await Group.findById(groupId);
 
         if (!group) {
@@ -623,9 +623,6 @@ const initializeSocket = (server) => {
           return;
         }
 
-        const Group = require('../models/Group').default;
-        const Message = require('../models/Message').default;
-        const Conversation = require('../models/Conversation').default;
 
         const group = await Group.findById(groupId);
         if (!group) {

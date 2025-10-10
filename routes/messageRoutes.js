@@ -5,6 +5,8 @@ import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
 import s3 from '../utils/s3.js';
 import mongoose from 'mongoose';
+import Group from '../models/Group.js';
+
 
 const router = express.Router();
 
@@ -427,5 +429,82 @@ router.get('/file/:key', authMiddleware, async (req, res) => {
         res.status(500).json({ msg: 'Could not fetch file', error: err.message });
     }
 });
+// Send a message in a group
+router.post('/groups/:groupId/messages', authMiddleware, async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { content, type = 'text', key, fileType, fileName } = req.body;
+    const senderId = req.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(groupId)) {
+      return res.status(400).json({ msg: 'Invalid group ID' });
+    }
+
+    if (type === 'text' && (!content || content.trim().length === 0)) {
+      return res.status(400).json({ msg: 'Message content is required for text messages' });
+    }
+
+    if (['image', 'video', 'audio'].includes(type) && !key) {
+      return res.status(400).json({ msg: 'File key is required for media messages' });
+    }
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({ msg: 'Group not found' });
+    }
+
+    if (!group.members.includes(senderId)) {
+      return res.status(403).json({ msg: 'You are not a member of this group' });
+    }
+
+    let messageData = {
+      sender: senderId,
+      group: groupId,
+      type,
+      readBy: [senderId]
+    };
+
+    if (type === 'text') {
+      messageData.content = content.trim();
+    }
+
+    if (['image', 'video', 'audio'].includes(type)) {
+      messageData.key = key;
+      messageData.fileType = fileType;
+      messageData.fileName = fileName;
+    }
+
+    const message = await Message.create(messageData);
+    await message.populate('sender', 'username avatar');
+
+    if (['image', 'video', 'audio'].includes(type)) {
+      message.url = await s3.getSignedUrlPromise('getObject', {
+        Bucket: process.env.WASABI_BUCKET,
+        Key: message.key,
+        Expires: 3600
+      });
+    }
+
+    // Update group's last message
+    group.lastMessage = message._id;
+    group.updatedAt = new Date();
+    await group.save();
+
+    // Emit message via socket.io
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`group-${groupId}`).emit('new-group-message', {
+        message,
+        groupId
+      });
+    }
+
+    res.status(201).json(message);
+  } catch (error) {
+    console.error('Send group message error:', error);
+    res.status(500).json({ msg: 'Server error', error: error.message });
+  }
+});
+
 
 export default router;
