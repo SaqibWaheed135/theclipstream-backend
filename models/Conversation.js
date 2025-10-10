@@ -21,12 +21,20 @@ const conversationSchema = new mongoose.Schema({
 conversationSchema.index({ participants: 1 });
 conversationSchema.index({ updatedAt: -1 });
 
+// conversationSchema.pre('save', function(next) {
+//   if (this.participants.length < 2) {
+//     return next(new Error('Conversation must have at least 2 participants'));
+//   }
+//   next();
+// });
 conversationSchema.pre('save', function(next) {
-  if (this.participants.length < 2) {
+  // Only enforce 2 participants for non-group chats
+  if (!this.isGroup && this.participants.length < 2) {
     return next(new Error('Conversation must have at least 2 participants'));
   }
   next();
 });
+
 
 const Conversation = mongoose.model('Conversation', conversationSchema);
 export default Conversation;
