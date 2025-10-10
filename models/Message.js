@@ -10,14 +10,7 @@ const messageSchema = new mongoose.Schema({
     fileName: { type: String },
     fileType: { type: String }, // New field for MIME type
     key: { type: String },
-    // readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    readBy: [
-  {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    readAt: { type: Date, default: Date.now }
-  }
-],
-
+    readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 
     isDeleted: { type: Boolean, default: false },
     deletedFor: [{
