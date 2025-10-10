@@ -19,7 +19,7 @@ const generateStreamDetails = (streamId, userId) => {
 const initializeSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: ["https://theclipstream.netlify.app", "http://localhost:5173" , "https://theclipstream.com"],
+      origin: ["https://theclipstream.netlify.app", "http://localhost:5173", "https://theclipstream.com"],
       methods: ["GET", "POST"],
       credentials: true
     }
@@ -28,9 +28,9 @@ const initializeSocket = (server) => {
   // Authentication middleware for socket
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth.token || 
-                   socket.handshake.headers.authorization?.split(' ')[1];
-      
+      const token = socket.handshake.auth.token ||
+        socket.handshake.headers.authorization?.split(' ')[1];
+
       if (!token) {
         // Allow anonymous viewers for live streams only
         socket.userId = null;
@@ -40,7 +40,7 @@ const initializeSocket = (server) => {
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const user = await User.findById(decoded.userId || decoded.id).select('-password');
-      
+
       if (!user) {
         socket.userId = null;
         socket.isAuthenticated = false;
@@ -48,11 +48,11 @@ const initializeSocket = (server) => {
         socket.userId = user._id.toString();
         socket.user = user;
         socket.isAuthenticated = true;
-        
+
         // Update user online status
         await user.setOnlineStatus(true);
       }
-      
+
       next();
     } catch (error) {
       console.error('Socket auth error:', error);
@@ -68,7 +68,7 @@ const initializeSocket = (server) => {
     // Join user's personal room for notifications
     if (socket.isAuthenticated) {
       socket.join(`user-${socket.userId}`);
-      
+
       // Broadcast online status to followers
       const user = await User.findById(socket.userId).populate('followers', '_id');
       if (user && user.followers) {
@@ -87,11 +87,11 @@ const initializeSocket = (server) => {
     socket.on('join-stream', async (data) => {
       try {
         const { streamId, isStreamer } = data;
-        
+
         const liveStream = await LiveStream.findById(streamId)
           .populate('streamer', 'username avatar')
           .populate('streams.user', 'username avatar');
-        
+
         if (!liveStream) {
           socket.emit('error', { message: 'Live stream not found' });
           return;
@@ -106,7 +106,7 @@ const initializeSocket = (server) => {
             socket.emit('error', { message: 'Not authorized to stream' });
             return;
           }
-          
+
           socket.emit('stream-started', {
             streamId,
             stream: liveStream
@@ -309,10 +309,11 @@ const initializeSocket = (server) => {
     });
 
     // === MESSAGING EVENTS ===
+    // In socket.js - join-conversation event
     socket.on('join-conversation', async (data) => {
       try {
         const { conversationId } = data;
-        
+
         if (!socket.isAuthenticated) {
           socket.emit('error', { message: 'Authentication required for messaging' });
           return;
@@ -328,7 +329,7 @@ const initializeSocket = (server) => {
         socket.join(`conversation-${conversationId}`);
         socket.currentConversationId = conversationId;
 
-        // Mark messages as read when joining conversation
+        // Mark messages as read - FIXED VERSION
         await Message.updateMany(
           {
             conversation: conversationId,
@@ -336,7 +337,7 @@ const initializeSocket = (server) => {
             readBy: { $ne: socket.userId }
           },
           {
-            $push: { readBy: { user: socket.userId, readAt: new Date() } }
+            $addToSet: { readBy: socket.userId }  // Changed from $push with object
           }
         );
 
@@ -344,6 +345,35 @@ const initializeSocket = (server) => {
       } catch (error) {
         console.error('Join conversation error:', error);
         socket.emit('error', { message: 'Could not join conversation' });
+      }
+    });
+
+    // Also update mark-messages-read event
+    socket.on('mark-messages-read', async (data) => {
+      try {
+        const { conversationId, messageIds } = data;
+
+        if (!socket.isAuthenticated) return;
+
+        await Message.updateMany(
+          {
+            _id: { $in: messageIds },
+            conversation: conversationId,
+            sender: { $ne: socket.userId },
+            readBy: { $ne: socket.userId }
+          },
+          {
+            $addToSet: { readBy: socket.userId }  // Changed from $push with object
+          }
+        );
+
+        socket.to(`conversation-${conversationId}`).emit('messages-read', {
+          userId: socket.userId,
+          messageIds,
+          readAt: new Date()
+        });
+      } catch (error) {
+        console.error('Mark messages read error:', error);
       }
     });
 
@@ -356,7 +386,7 @@ const initializeSocket = (server) => {
     socket.on('send-message', async (data) => {
       try {
         const { conversationId, content, type = 'text' } = data;
-        
+
         if (!socket.isAuthenticated) {
           socket.emit('error', { message: 'Authentication required for messaging' });
           return;
@@ -379,11 +409,11 @@ const initializeSocket = (server) => {
         // Check messaging permissions
         const recipients = conversation.participants.filter(p => p._id.toString() !== socket.userId);
         const sender = await User.findById(socket.userId);
-        
+
         for (let recipient of recipients) {
           if (!recipient.canReceiveMessageFrom(socket.userId)) {
-            socket.emit('error', { 
-              message: `${recipient.username} doesn't accept messages from you` 
+            socket.emit('error', {
+              message: `${recipient.username} doesn't accept messages from you`
             });
             return;
           }
@@ -450,7 +480,7 @@ const initializeSocket = (server) => {
     socket.on('mark-messages-read', async (data) => {
       try {
         const { conversationId, messageIds } = data;
-        
+
         if (!socket.isAuthenticated) return;
 
         await Message.updateMany(
@@ -478,7 +508,7 @@ const initializeSocket = (server) => {
     socket.on('follow-request-response', async (data) => {
       try {
         const { requestId, action } = data;
-        
+
         if (!socket.isAuthenticated) {
           socket.emit('error', { message: 'Authentication required' });
           return;
@@ -497,7 +527,7 @@ const initializeSocket = (server) => {
     // === DISCONNECT HANDLING ===
     socket.on('disconnect', async () => {
       console.log(`User disconnected: ${socket.userId || 'Anonymous'}`);
-      
+
       try {
         // Handle live stream disconnection
         if (socket.currentStreamId) {
@@ -529,7 +559,7 @@ const initializeSocket = (server) => {
         if (socket.isAuthenticated) {
           const user = await User.findById(socket.userId).populate('followers', '_id');
           await user.setOnlineStatus(false);
-          
+
           if (user && user.followers) {
             user.followers.forEach(follower => {
               socket.to(`user-${follower._id}`).emit('user-offline', {
@@ -546,152 +576,152 @@ const initializeSocket = (server) => {
       }
     });
     socket.on('join-group', async (data) => {
-  try {
-    const { groupId } = data;
-    
-    if (!socket.isAuthenticated) {
-      socket.emit('error', { message: 'Authentication required for groups' });
-      return;
-    }
+      try {
+        const { groupId } = data;
 
-    const Group = require('../models/Group').default;
-    const group = await Group.findById(groupId);
-    
-    if (!group) {
-      socket.emit('error', { message: 'Group not found' });
-      return;
-    }
+        if (!socket.isAuthenticated) {
+          socket.emit('error', { message: 'Authentication required for groups' });
+          return;
+        }
 
-    // Verify user is a member
-    if (!group.isMember(socket.userId)) {
-      socket.emit('error', { message: 'Not a member of this group' });
-      return;
-    }
+        const Group = require('../models/Group').default;
+        const group = await Group.findById(groupId);
 
-    socket.join(`group-${groupId}`);
-    socket.currentGroupId = groupId;
+        if (!group) {
+          socket.emit('error', { message: 'Group not found' });
+          return;
+        }
 
-    socket.emit('joined-group', { groupId });
-  } catch (error) {
-    console.error('Join group error:', error);
-    socket.emit('error', { message: 'Could not join group' });
-  }
-});
+        // Verify user is a member
+        if (!group.isMember(socket.userId)) {
+          socket.emit('error', { message: 'Not a member of this group' });
+          return;
+        }
 
-socket.on('leave-group', (data) => {
-  const { groupId } = data;
-  socket.leave(`group-${groupId}`);
-  socket.currentGroupId = null;
-});
+        socket.join(`group-${groupId}`);
+        socket.currentGroupId = groupId;
 
-socket.on('send-group-message', async (data) => {
-  try {
-    const { groupId, content, type = 'text', key, fileType, fileName } = data;
-    
-    if (!socket.isAuthenticated) {
-      socket.emit('error', { message: 'Authentication required' });
-      return;
-    }
-
-    const Group = require('../models/Group').default;
-    const Message = require('../models/Message').default;
-    const Conversation = require('../models/Conversation').default;
-    
-    const group = await Group.findById(groupId);
-    if (!group) {
-      socket.emit('error', { message: 'Group not found' });
-      return;
-    }
-
-    // Check if user can post
-    if (!group.canPost(socket.userId)) {
-      socket.emit('error', { message: 'You do not have permission to post in this group' });
-      return;
-    }
-
-    // Create message
-    let messageData = {
-      sender: socket.userId,
-      conversation: group.conversation,
-      type,
-      readBy: [socket.userId]
-    };
-
-    if (type === 'text') {
-      messageData.content = content?.trim();
-    }
-
-    if (['image', 'video', 'audio'].includes(type)) {
-      messageData.key = key;
-      messageData.fileType = fileType;
-      messageData.fileName = fileName;
-    }
-
-    const message = await Message.create(messageData);
-    await message.populate('sender', 'username avatar');
-
-    // Update conversation
-    const conversation = await Conversation.findById(group.conversation);
-    if (conversation) {
-      conversation.lastMessage = message._id;
-      conversation.updatedAt = new Date();
-      await conversation.save();
-    }
-
-    // Emit to all group members
-    io.to(`group-${groupId}`).emit('new-group-message', {
-      message,
-      groupId
+        socket.emit('joined-group', { groupId });
+      } catch (error) {
+        console.error('Join group error:', error);
+        socket.emit('error', { message: 'Could not join group' });
+      }
     });
 
-  } catch (error) {
-    console.error('Send group message error:', error);
-    socket.emit('error', { message: 'Could not send message' });
-  }
-});
-
-socket.on('group-typing-start', (data) => {
-  const { groupId } = data;
-  if (socket.isAuthenticated && groupId) {
-    socket.to(`group-${groupId}`).emit('group-user-typing', {
-      userId: socket.userId,
-      username: socket.user.username,
-      groupId
+    socket.on('leave-group', (data) => {
+      const { groupId } = data;
+      socket.leave(`group-${groupId}`);
+      socket.currentGroupId = null;
     });
-  }
-});
 
-socket.on('group-typing-stop', (data) => {
-  const { groupId } = data;
-  if (socket.isAuthenticated && groupId) {
-    socket.to(`group-${groupId}`).emit('group-user-stopped-typing', {
-      userId: socket.userId,
-      groupId
+    socket.on('send-group-message', async (data) => {
+      try {
+        const { groupId, content, type = 'text', key, fileType, fileName } = data;
+
+        if (!socket.isAuthenticated) {
+          socket.emit('error', { message: 'Authentication required' });
+          return;
+        }
+
+        const Group = require('../models/Group').default;
+        const Message = require('../models/Message').default;
+        const Conversation = require('../models/Conversation').default;
+
+        const group = await Group.findById(groupId);
+        if (!group) {
+          socket.emit('error', { message: 'Group not found' });
+          return;
+        }
+
+        // Check if user can post
+        if (!group.canPost(socket.userId)) {
+          socket.emit('error', { message: 'You do not have permission to post in this group' });
+          return;
+        }
+
+        // Create message
+        let messageData = {
+          sender: socket.userId,
+          conversation: group.conversation,
+          type,
+          readBy: [socket.userId]
+        };
+
+        if (type === 'text') {
+          messageData.content = content?.trim();
+        }
+
+        if (['image', 'video', 'audio'].includes(type)) {
+          messageData.key = key;
+          messageData.fileType = fileType;
+          messageData.fileName = fileName;
+        }
+
+        const message = await Message.create(messageData);
+        await message.populate('sender', 'username avatar');
+
+        // Update conversation
+        const conversation = await Conversation.findById(group.conversation);
+        if (conversation) {
+          conversation.lastMessage = message._id;
+          conversation.updatedAt = new Date();
+          await conversation.save();
+        }
+
+        // Emit to all group members
+        io.to(`group-${groupId}`).emit('new-group-message', {
+          message,
+          groupId
+        });
+
+      } catch (error) {
+        console.error('Send group message error:', error);
+        socket.emit('error', { message: 'Could not send message' });
+      }
     });
-  }
-});
 
-// Handle group member events
-socket.on('update-group-member', async (data) => {
-  try {
-    const { groupId, action, memberId } = data;
-    
-    if (!socket.isAuthenticated) {
-      socket.emit('error', { message: 'Authentication required' });
-      return;
-    }
-
-    io.to(`group-${groupId}`).emit('group-member-updated', {
-      groupId,
-      action,
-      memberId,
-      updatedBy: socket.userId,
-      timestamp: new Date()
+    socket.on('group-typing-start', (data) => {
+      const { groupId } = data;
+      if (socket.isAuthenticated && groupId) {
+        socket.to(`group-${groupId}`).emit('group-user-typing', {
+          userId: socket.userId,
+          username: socket.user.username,
+          groupId
+        });
+      }
     });
-  } catch (error) {
-    console.error('Update group member error:', error);
-  }
-});
+
+    socket.on('group-typing-stop', (data) => {
+      const { groupId } = data;
+      if (socket.isAuthenticated && groupId) {
+        socket.to(`group-${groupId}`).emit('group-user-stopped-typing', {
+          userId: socket.userId,
+          groupId
+        });
+      }
+    });
+
+    // Handle group member events
+    socket.on('update-group-member', async (data) => {
+      try {
+        const { groupId, action, memberId } = data;
+
+        if (!socket.isAuthenticated) {
+          socket.emit('error', { message: 'Authentication required' });
+          return;
+        }
+
+        io.to(`group-${groupId}`).emit('group-member-updated', {
+          groupId,
+          action,
+          memberId,
+          updatedBy: socket.userId,
+          timestamp: new Date()
+        });
+      } catch (error) {
+        console.error('Update group member error:', error);
+      }
+    });
   });
 
   return io;

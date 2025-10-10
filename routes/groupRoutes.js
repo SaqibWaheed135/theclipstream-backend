@@ -20,9 +20,11 @@ router.post('/create', authMiddleware, async (req, res) => {
             return res.status(400).json({ msg: 'Group name is required' });
         }
 
-        // Create conversation for the group
+        // Create conversation - for groups, admin can be the only participant initially
+        const participants = [userId, ...members];
+        
         const conversation = await Conversation.create({
-            participants: [userId, ...members],
+            participants: participants,
             isGroup: true
         });
 
