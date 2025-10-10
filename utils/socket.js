@@ -545,14 +545,7 @@ const initializeSocket = (server) => {
         console.error('Disconnect cleanup error:', error);
       }
     });
-  });
-
-  return io;
-};
-// Add these events to your existing socket.js file
-
-// === GROUP MESSAGING EVENTS ===
-socket.on('join-group', async (data) => {
+    socket.on('join-group', async (data) => {
   try {
     const { groupId } = data;
     
@@ -699,6 +692,12 @@ socket.on('update-group-member', async (data) => {
     console.error('Update group member error:', error);
   }
 });
+  });
+
+  return io;
+};
+
+
 
 // In disconnect handler, add this to leave group rooms:
 // if (socket.currentGroupId) {
