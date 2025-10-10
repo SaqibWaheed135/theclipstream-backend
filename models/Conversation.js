@@ -11,7 +11,9 @@ const conversationSchema = new mongoose.Schema({
     ref: 'Message'
   },
   isGroup: { type: Boolean, default: false },
-  groupName: { type: String, maxLength: 50 },
+  // groupName: { type: String, maxLength: 50 },
+  group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' },
+
   groupAvatar: String,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });

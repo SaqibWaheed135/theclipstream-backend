@@ -10,7 +10,6 @@ import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 
 
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -29,6 +28,8 @@ import adminVideoRoutes from './routes/adminVideoRoutes.js';
 import rechargeRoutes from './routes/rechargeRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js'
 import transferRoutes from './routes/transferRoutes.js';
+import groupRoutes from './routes/groupRoutes.js';
+
 // Import Socket.IO setup
 import { initializeSocket } from './utils/socket.js';
 
@@ -122,6 +123,9 @@ app.use('/api/recharges', rechargeRoutes); // for /api/users/points/* routes
 app.use('/api/payments', rechargeRoutes); 
 app.use('/api/notifications', notificationRoutes); 
 app.use('/api/points/transfer', transferRoutes); 
+app.use('/api/groups', groupRoutes);
+
+
 
 
 

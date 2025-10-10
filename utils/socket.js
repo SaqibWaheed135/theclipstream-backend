@@ -549,7 +549,161 @@ const initializeSocket = (server) => {
 
   return io;
 };
+// Add these events to your existing socket.js file
 
+// === GROUP MESSAGING EVENTS ===
+socket.on('join-group', async (data) => {
+  try {
+    const { groupId } = data;
+    
+    if (!socket.isAuthenticated) {
+      socket.emit('error', { message: 'Authentication required for groups' });
+      return;
+    }
+
+    const Group = require('../models/Group').default;
+    const group = await Group.findById(groupId);
+    
+    if (!group) {
+      socket.emit('error', { message: 'Group not found' });
+      return;
+    }
+
+    // Verify user is a member
+    if (!group.isMember(socket.userId)) {
+      socket.emit('error', { message: 'Not a member of this group' });
+      return;
+    }
+
+    socket.join(`group-${groupId}`);
+    socket.currentGroupId = groupId;
+
+    socket.emit('joined-group', { groupId });
+  } catch (error) {
+    console.error('Join group error:', error);
+    socket.emit('error', { message: 'Could not join group' });
+  }
+});
+
+socket.on('leave-group', (data) => {
+  const { groupId } = data;
+  socket.leave(`group-${groupId}`);
+  socket.currentGroupId = null;
+});
+
+socket.on('send-group-message', async (data) => {
+  try {
+    const { groupId, content, type = 'text', key, fileType, fileName } = data;
+    
+    if (!socket.isAuthenticated) {
+      socket.emit('error', { message: 'Authentication required' });
+      return;
+    }
+
+    const Group = require('../models/Group').default;
+    const Message = require('../models/Message').default;
+    const Conversation = require('../models/Conversation').default;
+    
+    const group = await Group.findById(groupId);
+    if (!group) {
+      socket.emit('error', { message: 'Group not found' });
+      return;
+    }
+
+    // Check if user can post
+    if (!group.canPost(socket.userId)) {
+      socket.emit('error', { message: 'You do not have permission to post in this group' });
+      return;
+    }
+
+    // Create message
+    let messageData = {
+      sender: socket.userId,
+      conversation: group.conversation,
+      type,
+      readBy: [socket.userId]
+    };
+
+    if (type === 'text') {
+      messageData.content = content?.trim();
+    }
+
+    if (['image', 'video', 'audio'].includes(type)) {
+      messageData.key = key;
+      messageData.fileType = fileType;
+      messageData.fileName = fileName;
+    }
+
+    const message = await Message.create(messageData);
+    await message.populate('sender', 'username avatar');
+
+    // Update conversation
+    const conversation = await Conversation.findById(group.conversation);
+    if (conversation) {
+      conversation.lastMessage = message._id;
+      conversation.updatedAt = new Date();
+      await conversation.save();
+    }
+
+    // Emit to all group members
+    io.to(`group-${groupId}`).emit('new-group-message', {
+      message,
+      groupId
+    });
+
+  } catch (error) {
+    console.error('Send group message error:', error);
+    socket.emit('error', { message: 'Could not send message' });
+  }
+});
+
+socket.on('group-typing-start', (data) => {
+  const { groupId } = data;
+  if (socket.isAuthenticated && groupId) {
+    socket.to(`group-${groupId}`).emit('group-user-typing', {
+      userId: socket.userId,
+      username: socket.user.username,
+      groupId
+    });
+  }
+});
+
+socket.on('group-typing-stop', (data) => {
+  const { groupId } = data;
+  if (socket.isAuthenticated && groupId) {
+    socket.to(`group-${groupId}`).emit('group-user-stopped-typing', {
+      userId: socket.userId,
+      groupId
+    });
+  }
+});
+
+// Handle group member events
+socket.on('update-group-member', async (data) => {
+  try {
+    const { groupId, action, memberId } = data;
+    
+    if (!socket.isAuthenticated) {
+      socket.emit('error', { message: 'Authentication required' });
+      return;
+    }
+
+    io.to(`group-${groupId}`).emit('group-member-updated', {
+      groupId,
+      action,
+      memberId,
+      updatedBy: socket.userId,
+      timestamp: new Date()
+    });
+  } catch (error) {
+    console.error('Update group member error:', error);
+  }
+});
+
+// In disconnect handler, add this to leave group rooms:
+// if (socket.currentGroupId) {
+//   socket.leave(`group-${socket.currentGroupId}`);
+// }
 const getIO = () => {
   if (!io) {
     throw new Error('Socket.IO not initialized');
