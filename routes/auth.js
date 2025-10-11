@@ -32,19 +32,59 @@ function generateToken(user) {
 }
 
 // POST /api/auth/signup
+// router.post('/signup', async (req, res) => {
+//   try {
+//     const { username, email, password } = req.body;
+//     if (!username || !email || !password) return res.status(400).json({ msg: 'All fields are required' });
+
+//     const exists = await User.findOne({ email });
+//     if (exists) return res.status(400).json({ msg: 'Email already used' });
+
+//     // Check if username exists
+//     const usernameExists = await User.findOne({ username });
+//     if (usernameExists) return res.status(400).json({ msg: 'Username already taken' });
+
+//     // Generate default avatar
+//     const defaultAvatar = generateDefaultAvatar(username);
+
+//     const user = new User({
+//       username,
+//       email,
+//       password,
+//       points: 5,
+//       avatar: defaultAvatar
+//     });
+//     await user.save();
+
+//     const token = generateToken(user);
+//     res.status(201).json({
+//       token,
+//       user: {
+//         id: user._id,
+//         username: user.username,
+//         email: user.email,
+//         avatar: user.avatar,
+//         points: user.points
+//       }
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ msg: 'Server error' });
+//   }
+// });
+
+// Update your signup route
 router.post('/signup', async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, referralCode } = req.body;
     if (!username || !email || !password) return res.status(400).json({ msg: 'All fields are required' });
 
     const exists = await User.findOne({ email });
     if (exists) return res.status(400).json({ msg: 'Email already used' });
 
-    // Check if username exists
     const usernameExists = await User.findOne({ username });
     if (usernameExists) return res.status(400).json({ msg: 'Username already taken' });
 
-    // Generate default avatar
     const defaultAvatar = generateDefaultAvatar(username);
 
     const user = new User({
@@ -52,8 +92,31 @@ router.post('/signup', async (req, res) => {
       email,
       password,
       points: 5,
-      avatar: defaultAvatar
+      avatar: defaultAvatar,
+      inviteCode: Math.random().toString(36).substring(2, 10) // Generate unique code
     });
+
+    // Handle referral
+    if (referralCode) {
+      const referrer = await User.findOne({ 
+        $or: [
+          { inviteCode: referralCode },
+          { _id: referralCode }
+        ]
+      });
+
+      if (referrer) {
+        user.invitedBy = referrer._id;
+        user.points += 5; // Bonus points for using referral
+        
+        // Reward the referrer
+        referrer.totalInvites += 1;
+        referrer.points += 10; // Coins for successful referral
+        referrer.inviteRewardEarned += 10;
+        await referrer.save();
+      }
+    }
+
     await user.save();
 
     const token = generateToken(user);
@@ -64,7 +127,9 @@ router.post('/signup', async (req, res) => {
         username: user.username,
         email: user.email,
         avatar: user.avatar,
-        points: user.points
+        points: user.points,
+        inviteCode: user.inviteCode,
+        totalInvites: user.totalInvites
       }
     });
   } catch (err) {
