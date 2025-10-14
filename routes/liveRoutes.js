@@ -370,6 +370,50 @@ router.post('/:streamId/report', authMiddleware, async (req, res) => {
     res.status(500).json({ msg: 'Could not report live stream' });
   }
 });
+// Add new routes to liveRoutes.js
+
+// Add product to stream
+router.post('/:streamId/add-product', authMiddleware, async (req, res) => {
+  try {
+    const liveStream = await LiveStream.findById(req.params.streamId);
+    if (!liveStream) return res.status(404).json({ msg: 'Stream not found' });
+    if (liveStream.streamer.toString() !== req.userId) return res.status(403).json({ msg: 'Only host can add products' });
+    
+    const product = {
+      ...req.body,
+      addedBy: req.userId
+    };
+    liveStream.products.push(product);
+    await liveStream.save();
+    
+    res.json({ product, productIndex: liveStream.products.length - 1 });
+  } catch (error) {
+    res.status(500).json({ msg: 'Could not add product' });
+  }
+});
+
+// Place order
+router.post('/:streamId/place-order', authMiddleware, async (req, res) => {
+  try {
+    const { productIndex, quantity = 1 } = req.body;
+    const liveStream = await LiveStream.findById(req.params.streamId);
+    if (!liveStream) return res.status(404).json({ msg: 'Stream not found' });
+    if (productIndex < 0 || productIndex >= liveStream.products.length) return res.status(400).json({ msg: 'Invalid product' });
+    if (liveStream.products[productIndex].type !== 'product') return res.status(400).json({ msg: 'Can only order products' });
+    
+    const order = {
+      productIndex,
+      buyer: req.userId,
+      quantity
+    };
+    liveStream.orders.push(order);
+    await liveStream.save();
+    
+    res.json({ msg: 'Order placed' });
+  } catch (error) {
+    res.status(500).json({ msg: 'Could not place order' });
+  }
+});
 
 
 export default router;

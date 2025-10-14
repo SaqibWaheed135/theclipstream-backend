@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+const { Schema } = mongoose;
+
 
 const liveStreamSchema = new mongoose.Schema({
   title: {
@@ -108,6 +110,63 @@ const liveStreamSchema = new mongoose.Schema({
       default: Date.now,
     },
   }],
+  products: [{
+  type: {
+    type: String,
+    enum: ['product', 'ad'],
+    required: true
+  },
+  name: {
+    type: String,
+    required: true
+  },
+  description: {
+    type: String
+  },
+  price: {
+    type: Number,
+    required: true
+  },
+  imageUrl: {
+    type: String
+  },
+  link: {  // For ads, this could be external link; for products, purchase link or ID
+    type: String
+  },
+  addedBy: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  addedAt: {
+    type: Date,
+    default: Date.now
+  }
+}],
+orders: [{
+  productIndex: {  // Index in products array for reference
+    type: Number,
+    required: true
+  },
+  buyer: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  quantity: {
+    type: Number,
+    default: 1
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'completed', 'cancelled'],
+    default: 'pending'
+  },
+  orderedAt: {
+    type: Date,
+    default: Date.now
+  }
+}],
 }, {
   timestamps: true,
   indexes: [
