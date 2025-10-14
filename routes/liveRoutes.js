@@ -418,6 +418,34 @@ router.post('/:streamId/place-order', authMiddleware, async (req, res) => {
   }
 });
 
+// Get all orders for a live stream
+router.get('/:streamId/orders', authMiddleware, async (req, res) => {
+  try {
+    const { streamId } = req.params;
+
+    // Find the live stream and populate buyer info
+    const liveStream = await LiveStream.findById(streamId)
+      .populate('orders.buyer', 'username avatar');
+
+    if (!liveStream) {
+      return res.status(404).json({ msg: 'Live stream not found' });
+    }
+
+    // Optional: Restrict access — only the streamer can see all orders
+    if (liveStream.streamer.toString() !== req.userId) {
+      return res.status(403).json({ msg: 'Not authorized to view orders' });
+    }
+
+    res.json({
+      orders: liveStream.orders || [],
+    });
+  } catch (error) {
+    console.error('Get orders error:', error);
+    res.status(500).json({ msg: 'Could not fetch orders' });
+  }
+});
+
+
 // Get user's coin balance
 router.get('/user/coin-balance', authMiddleware, async (req, res) => {
   try {
