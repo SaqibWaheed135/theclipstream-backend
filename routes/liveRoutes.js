@@ -1,9 +1,70 @@
 import express from 'express';
 import LiveStream from '../models/LiveStream.js';
+import User from '../models/User.js';
 import authMiddleware from '../middleware/auth.js';
 import { generateStreamDetails, endLiveInput, generateViewerToken, testLiveKitConnection,testTokenGeneration} from '../utils/streaming.js';
 
 const router = express.Router();
+
+// Get user's coin balance
+router.get('/user/coin-balance', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+    res.json({ balance: user.points || 0 });
+  } catch (error) {
+    console.error('Error fetching coin balance:', error);
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+
+// Purchase product with coins
+router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) => {
+  try {
+    const { streamId } = req.params;
+    const { productIndex, coinCost } = req.body;
+
+    // Validate stream and product
+    const liveStream = await LiveStream.findById(streamId);
+    if (!liveStream) return res.status(404).json({ msg: 'Stream not found' });
+    if (productIndex < 0 || productIndex >= liveStream.products.length) {
+      return res.status(400).json({ msg: 'Invalid product' });
+    }
+    if (liveStream.products[productIndex].type !== 'product') {
+      return res.status(400).json({ msg: 'Can only purchase products' });
+    }
+
+    // Validate user's coin balance
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (user.points < coinCost) {
+      return res.status(400).json({ msg: 'Insufficient coins' });
+    }
+
+    // Deduct coins from user and credit to live stream
+    user.points -= coinCost;
+    await user.save();
+
+    liveStream.points = (liveStream.points || 0) + coinCost;
+    
+    // Record the order
+    const order = {
+      productIndex,
+      buyer: req.userId,
+      quantity: 1,
+      status: 'completed', // Since payment is already processed
+      orderedAt: new Date()
+    };
+    liveStream.orders.push(order);
+    await liveStream.save();
+
+    res.json({ msg: 'Purchase successful' });
+  } catch (error) {
+    console.error('Purchase error:', error);
+    res.status(500).json({ msg: 'Failed to complete purchase' });
+  }
+});
 
 // Create a new live stream
 router.post('/create', authMiddleware, async (req, res) => {
