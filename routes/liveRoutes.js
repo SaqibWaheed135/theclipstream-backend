@@ -1034,7 +1034,7 @@ router.get('/user/coin-balance', authMiddleware, async (req, res) => {
 router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) => {
   try {
     const { streamId } = req.params;
-    const { productIndex, coinCost } = req.body;
+    const { productIndex, coinCost, deliveryInfo } = req.body;
 
     const liveStream = await LiveStream.findById(streamId)
       .populate('streamer', 'username avatar');
@@ -1047,6 +1047,13 @@ router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) =
     
     if (liveStream.products[productIndex].type !== 'product') {
       return res.status(400).json({ msg: 'Can only purchase products' });
+    }
+
+    // Validate delivery info
+    if (!deliveryInfo || !deliveryInfo.firstName || !deliveryInfo.lastName || !deliveryInfo.email || 
+        !deliveryInfo.phone || !deliveryInfo.address || !deliveryInfo.city || !deliveryInfo.state || 
+        !deliveryInfo.zipCode || !deliveryInfo.country) {
+      return res.status(400).json({ msg: 'Complete delivery information is required' });
     }
 
     const user = await User.findById(req.userId);
@@ -1069,13 +1076,24 @@ router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) =
     // Update stream points (stream-specific earnings)
     liveStream.points = (liveStream.points || 0) + coinCost;
     
-    // Record the order
+    // Record the order with delivery info
     const order = {
       productIndex,
       buyer: req.userId,
       quantity: 1,
       status: 'completed',
-      orderedAt: new Date()
+      orderedAt: new Date(),
+      deliveryInfo: {
+        firstName: deliveryInfo.firstName,
+        lastName: deliveryInfo.lastName,
+        email: deliveryInfo.email,
+        phone: deliveryInfo.phone,
+        address: deliveryInfo.address,
+        city: deliveryInfo.city,
+        state: deliveryInfo.state,
+        zipCode: deliveryInfo.zipCode,
+        country: deliveryInfo.country
+      }
     };
     liveStream.orders.push(order);
     await liveStream.save();
@@ -1086,13 +1104,14 @@ router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) =
     try {
       const io = getIO();
       
-      // Emit to host about the new order
+      // Emit to host about the new order with delivery info
       io.to(`stream-${streamId}`).emit('new-order', {
         order: newOrder,
         product: liveStream.products[productIndex],
         buyerUsername: user.username,
         streamerEarnings: coinCost,
-        totalEarnings: liveStream.points, // Stream-specific earnings
+        totalEarnings: liveStream.points,
+        deliveryInfo: order.deliveryInfo,
         streamId: streamId
       });
 
@@ -1100,7 +1119,7 @@ router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) =
       io.to(`user-${liveStream.streamer._id}`).emit('coins-updated', {
         coinBalance: streamer.points,
         earnedAmount: coinCost,
-        streamEarnings: liveStream.points, // Stream-specific earnings
+        streamEarnings: liveStream.points,
         streamId: streamId
       });
     } catch (socketError) {
