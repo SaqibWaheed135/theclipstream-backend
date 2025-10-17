@@ -460,17 +460,68 @@ router.get('/user/coin-balance', authMiddleware, async (req, res) => {
 
 
 // Purchase product with coins
+// router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) => {
+//   try {
+//     const { streamId } = req.params;
+//     const { productIndex, coinCost } = req.body;
+
+//     // Validate stream and product
+//     const liveStream = await LiveStream.findById(streamId);
+//     if (!liveStream) return res.status(404).json({ msg: 'Stream not found' });
+//     if (productIndex < 0 || productIndex >= liveStream.products.length) {
+//       return res.status(400).json({ msg: 'Invalid product' });
+//     }
+//     if (liveStream.products[productIndex].type !== 'product') {
+//       return res.status(400).json({ msg: 'Can only purchase products' });
+//     }
+
+//     // Validate user's coin balance
+//     const user = await User.findById(req.userId);
+//     if (!user) return res.status(404).json({ msg: 'User not found' });
+//     if (user.points < coinCost) {
+//       return res.status(400).json({ msg: 'Insufficient coins' });
+//     }
+
+//     // Deduct coins from user and credit to live stream
+//     user.points -= coinCost;
+//     await user.save();
+
+//     liveStream.points = (liveStream.points || 0) + coinCost;
+    
+//     // Record the order
+//     const order = {
+//       productIndex,
+//       buyer: req.userId,
+//       quantity: 1,
+//       status: 'completed', // Since payment is already processed
+//       orderedAt: new Date()
+//     };
+//     liveStream.orders.push(order);
+//     await liveStream.save();
+
+//     res.json({ msg: 'Purchase successful' });
+//   } catch (error) {
+//     console.error('Purchase error:', error);
+//     res.status(500).json({ msg: 'Failed to complete purchase' });
+//   }
+// });
+
+// Update the purchase-with-coins route in liveRoutes.js
 router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) => {
   try {
     const { streamId } = req.params;
     const { productIndex, coinCost } = req.body;
 
     // Validate stream and product
-    const liveStream = await LiveStream.findById(streamId);
+    const liveStream = await LiveStream.findById(streamId)
+      .populate('streamer', 'username avatar');
+    
     if (!liveStream) return res.status(404).json({ msg: 'Stream not found' });
+    
     if (productIndex < 0 || productIndex >= liveStream.products.length) {
       return res.status(400).json({ msg: 'Invalid product' });
     }
+    
     if (liveStream.products[productIndex].type !== 'product') {
       return res.status(400).json({ msg: 'Can only purchase products' });
     }
@@ -482,24 +533,64 @@ router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) =
       return res.status(400).json({ msg: 'Insufficient coins' });
     }
 
-    // Deduct coins from user and credit to live stream
+    // Deduct coins from buyer
     user.points -= coinCost;
     await user.save();
 
+    // ADD POINTS TO HOST
+    const streamer = await User.findById(liveStream.streamer._id);
+    if (streamer) {
+      streamer.points = (streamer.points || 0) + coinCost;
+      await streamer.save();
+    }
+
+    // Update stream points
     liveStream.points = (liveStream.points || 0) + coinCost;
     
-    // Record the order
+    // Record the order with buyer info
     const order = {
       productIndex,
       buyer: req.userId,
       quantity: 1,
-      status: 'completed', // Since payment is already processed
+      status: 'completed',
       orderedAt: new Date()
     };
     liveStream.orders.push(order);
     await liveStream.save();
 
-    res.json({ msg: 'Purchase successful' });
+    // Populate the order with buyer details for response
+    const populatedStream = await liveStream.populate('orders.buyer', 'username avatar');
+    const newOrder = populatedStream.orders[populatedStream.orders.length - 1];
+
+    // EMIT SOCKET EVENT to notify host
+    const { getIO } = await import('../socket.js');
+    try {
+      const io = getIO();
+      io.to(`stream-${streamId}`).emit('new-order', {
+        order: newOrder,
+        product: liveStream.products[productIndex],
+        buyerUsername: user.username,
+        streamerEarnings: coinCost,
+        totalEarnings: liveStream.points
+      });
+
+      // Notify the streamer specifically about coin update
+      io.to(`user-${liveStream.streamer._id}`).emit('coins-updated', {
+        coinBalance: streamer.points,
+        earnedAmount: coinCost,
+        streamId: streamId
+      });
+    } catch (socketError) {
+      console.error('Socket emission error:', socketError);
+      // Continue even if socket fails
+    }
+
+    res.json({ 
+      msg: 'Purchase successful',
+      order: newOrder,
+      streamerEarnings: coinCost,
+      totalEarnings: liveStream.points
+    });
   } catch (error) {
     console.error('Purchase error:', error);
     res.status(500).json({ msg: 'Failed to complete purchase' });
