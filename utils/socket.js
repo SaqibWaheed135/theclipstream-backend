@@ -719,6 +719,44 @@ const initializeSocket = (server) => {
         console.error('Update group member error:', error);
       }
     });
+    // socket.on('add-product', async (data) => {
+    //   try {
+    //     const { streamId, product } = data;
+
+    //     if (!socket.isAuthenticated) {
+    //       return socket.emit('error', { message: 'Authentication required' });
+    //     }
+
+    //     const liveStream = await LiveStream.findById(streamId);
+    //     if (!liveStream) {
+    //       return socket.emit('error', { message: 'Stream not found' });
+    //     }
+
+    //     // Only host can add products
+    //     if (liveStream.streamer.toString() !== socket.userId) {
+    //       return socket.emit('error', { message: 'Only host can add products' });
+    //     }
+
+    //     // Validate product data
+    //     if (!product.type || !['product', 'ad'].includes(product.type) ||
+    //       !product.name || !product.price) {
+    //       return socket.emit('error', { message: 'Invalid product data' });
+    //     }
+
+    //     product.addedBy = socket.userId;
+    //     liveStream.products.push(product);
+    //     await liveStream.save();
+
+    //     io.to(`stream-${streamId}`).emit('product-added', {
+    //       product,
+    //       productIndex: liveStream.products.length - 1
+    //     });
+    //   } catch (error) {
+    //     console.error('Add product error:', error);
+    //     socket.emit('error', { message: 'Could not add product' });
+    //   }
+    // });
+
     socket.on('add-product', async (data) => {
       try {
         const { streamId, product } = data;
@@ -739,23 +777,72 @@ const initializeSocket = (server) => {
 
         // Validate product data
         if (!product.type || !['product', 'ad'].includes(product.type) ||
-          !product.name || !product.price) {
+          !product.name || product.price === undefined) {
           return socket.emit('error', { message: 'Invalid product data' });
         }
 
         product.addedBy = socket.userId;
+        product.addedAt = new Date();
+
         liveStream.products.push(product);
         await liveStream.save();
 
+        const productIndex = liveStream.products.length - 1;
+
+        // Emit to ALL viewers in the stream room (including the host)
         io.to(`stream-${streamId}`).emit('product-added', {
-          product,
-          productIndex: liveStream.products.length - 1
+          product: product,
+          productIndex: productIndex,
+          streamId: streamId
         });
+
+        console.log(`Product added to stream ${streamId}:`, product.name);
       } catch (error) {
         console.error('Add product error:', error);
         socket.emit('error', { message: 'Could not add product' });
       }
     });
+
+    // socket.on('place-order', async (data) => {
+    //   try {
+    //     const { streamId, productIndex, quantity = 1 } = data;
+
+    //     if (!socket.isAuthenticated) {
+    //       return socket.emit('error', { message: 'Authentication required to place order' });
+    //     }
+
+    //     const liveStream = await LiveStream.findById(streamId);
+    //     if (!liveStream) {
+    //       return socket.emit('error', { message: 'Stream not found' });
+    //     }
+
+    //     if (productIndex < 0 || productIndex >= liveStream.products.length) {
+    //       return socket.emit('error', { message: 'Invalid product' });
+    //     }
+
+    //     const product = liveStream.products[productIndex];
+    //     if (product.type !== 'product') {
+    //       return socket.emit('error', { message: 'Can only order products, not ads' });
+    //     }
+
+    //     const order = {
+    //       productIndex,
+    //       buyer: socket.userId,
+    //       quantity,
+    //     };
+
+    //     liveStream.orders.push(order);
+    //     await liveStream.save();
+
+    //     io.to(`stream-${streamId}`).emit('new-order', {
+    //       order,
+    //       buyerUsername: socket.user.username
+    //     });
+    //   } catch (error) {
+    //     console.error('Place order error:', error);
+    //     socket.emit('error', { message: 'Could not place order' });
+    //   }
+    // });
 
     socket.on('place-order', async (data) => {
       try {
@@ -765,7 +852,9 @@ const initializeSocket = (server) => {
           return socket.emit('error', { message: 'Authentication required to place order' });
         }
 
-        const liveStream = await LiveStream.findById(streamId);
+        const liveStream = await LiveStream.findById(streamId)
+          .populate('orders.buyer', 'username avatar');
+
         if (!liveStream) {
           return socket.emit('error', { message: 'Stream not found' });
         }
@@ -783,21 +872,35 @@ const initializeSocket = (server) => {
           productIndex,
           buyer: socket.userId,
           quantity,
+          status: 'pending',
+          orderedAt: new Date()
         };
 
         liveStream.orders.push(order);
         await liveStream.save();
 
+        // Emit to ALL viewers in the stream - REAL-TIME ORDER UPDATE
         io.to(`stream-${streamId}`).emit('new-order', {
-          order,
-          buyerUsername: socket.user.username
+          order: {
+            ...order,
+            buyer: {
+              _id: socket.userId,
+              username: socket.user.username,
+              avatar: socket.user.avatar
+            }
+          },
+          buyerUsername: socket.user.username,
+          streamId: streamId
         });
+
+        console.log(`Order placed in stream ${streamId}:`, socket.user.username);
       } catch (error) {
         console.error('Place order error:', error);
         socket.emit('error', { message: 'Could not place order' });
       }
     });
   });
+
 
   return io;
 };
