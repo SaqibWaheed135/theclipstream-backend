@@ -3,6 +3,8 @@ import LiveStream from '../models/LiveStream.js';
 import User from '../models/User.js';
 import authMiddleware from '../middleware/auth.js';
 import { generateStreamDetails, endLiveInput, generateViewerToken, testLiveKitConnection,testTokenGeneration} from '../utils/streaming.js';
+import { getIO } from '../utils/socket.js';  // CORRECTED IMPORT
+
 
 const router = express.Router();
 
@@ -563,7 +565,7 @@ router.post('/:streamId/purchase-with-coins', authMiddleware, async (req, res) =
     const newOrder = populatedStream.orders[populatedStream.orders.length - 1];
 
     // EMIT SOCKET EVENT to notify host
-    const { getIO } = await import('../socket.js');
+    // const { getIO } = await import('../socket.js');
     try {
       const io = getIO();
       io.to(`stream-${streamId}`).emit('new-order', {
